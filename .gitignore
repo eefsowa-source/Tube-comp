@@ -1,0 +1,7 @@
+FLOP Labs/
+.DS_Store
+Build/
+build/
+*_artefacts/
+JuceLibraryCode/
+*.pid
