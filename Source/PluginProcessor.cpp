@@ -1,39 +1,43 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "SnappingBoolParameter.h"
+
+#include <cmath>
 
 namespace
 {
 struct FactoryPreset
 {
     const char* name;
-    std::array<float, 18> values;
+    std::array<float, 21> values;
 };
 
 // Values follow the parameter order in allParameterIDs below. Keeping every
 // parameter in each preset makes program changes deterministic in every host.
 constexpr std::array<FactoryPreset, 7> factoryPresets {{
     { "Default Vari-Mu", { 0.0f, 0.0f, 6.0f, 0.50f, 0.50f, 2.0f, 1.00f, 1.0f,
-                            -18.0f, 4.0f, 10.0f, 100.0f, 6.0f, 0.0f, 0.0f, 5.0f, 100.0f, 0.50f } },
+                            -18.0f, 4.0f, 10.0f, 100.0f, 6.0f, 0.0f, 0.0f, 5.0f, 100.0f, 0.50f, 1.0f, 0.0f, 1.0f } },
     { "Gentle Glue",     { 0.0f, 0.5f, 4.0f, 0.58f, 0.48f, 2.0f, 1.00f, 1.0f,
-                            -12.0f, 2.0f, 30.0f, 300.0f, 12.0f, 0.0f, 0.0f, 2.0f, 120.0f, 0.42f } },
+                            -12.0f, 2.0f, 30.0f, 300.0f, 12.0f, 0.0f, 0.0f, 2.0f, 120.0f, 0.42f, 1.0f, 0.0f, 1.0f } },
     { "Vocal Leveler",   { 1.0f, 0.0f, 5.5f, 0.66f, 0.56f, 2.0f, 1.00f, 1.0f,
-                            -20.0f, 3.0f, 8.0f, 180.0f, 9.0f, 0.0f, 0.0f, 4.0f, 90.0f, 0.55f } },
+                            -20.0f, 3.0f, 8.0f, 180.0f, 9.0f, 0.0f, 0.0f, 4.0f, 90.0f, 0.55f, 1.0f, 0.0f, 1.0f } },
     { "Drum Control",    { 0.0f, 1.0f, 7.0f, 0.42f, 0.58f, 2.0f, 1.00f, 1.0f,
-                            -16.0f, 6.0f, 3.0f, 80.0f, 4.0f, 0.0f, 0.0f, 8.0f, 140.0f, 0.62f } },
+                            -16.0f, 6.0f, 3.0f, 80.0f, 4.0f, 0.0f, 0.0f, 8.0f, 140.0f, 0.62f, 1.0f, 0.0f, 1.0f } },
     { "Bass Weight",     { 0.0f, -0.5f, 8.0f, 0.72f, 0.34f, 2.0f, 1.00f, 1.0f,
-                            -15.0f, 3.0f, 20.0f, 240.0f, 10.0f, 0.0f, 0.0f, 3.0f, 160.0f, 0.68f } },
+                            -15.0f, 3.0f, 20.0f, 240.0f, 10.0f, 0.0f, 0.0f, 3.0f, 160.0f, 0.68f, 1.0f, 0.0f, 1.0f } },
     { "Tube Color",      { -1.0f, -1.0f, 14.0f, 0.78f, 0.44f, 3.0f, 1.00f, 1.0f,
-                            -8.0f, 1.5f, 45.0f, 400.0f, 16.0f, 0.0f, 0.0f, 1.0f, 80.0f, 0.76f } },
+                            -8.0f, 1.5f, 45.0f, 400.0f, 16.0f, 0.0f, 0.0f, 1.0f, 80.0f, 0.76f, 1.0f, 0.0f, 1.0f } },
     { "Parallel Lift",   { 2.0f, 0.0f, 7.5f, 0.60f, 0.54f, 2.0f, 0.45f, 1.0f,
-                            -24.0f, 8.0f, 5.0f, 120.0f, 5.0f, 0.0f, 0.0f, 6.0f, 110.0f, 0.58f } }
+                            -24.0f, 8.0f, 5.0f, 120.0f, 5.0f, 0.0f, 0.0f, 6.0f, 110.0f, 0.58f, 1.0f, 0.0f, 1.0f } }
 }};
 
-const std::array<juce::String, 18> allParameterIDs {{
+const std::array<juce::String, 21> allParameterIDs {{
     ParamIDs::inputGain, ParamIDs::outputGain, ParamIDs::drive, ParamIDs::harmonics,
     ParamIDs::brightness, ParamIDs::oversample, ParamIDs::mix, ParamIDs::circuitModel,
     ParamIDs::threshold, ParamIDs::ratio, ParamIDs::attack, ParamIDs::release,
     ParamIDs::knee, ParamIDs::bypass, ParamIDs::antiAlias, ParamIDs::lookAhead,
-    ParamIDs::sidechainHPF, ParamIDs::biasDrive
+    ParamIDs::sidechainHPF, ParamIDs::biasDrive, ParamIDs::topology,
+    ParamIDs::timeConstant, ParamIDs::linkMode
 }};
 
 constexpr const char* currentProgramProperty = "factoryProgram";
@@ -151,7 +155,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout TubeCompAudioProcessor::crea
         juce::NormalisableRange<float> (0.0f, 24.0f, 0.1f), 6.0f,
         juce::AudioParameterFloatAttributes().withLabel ("dB")));
 
-    params.push_back (std::make_unique<juce::AudioParameterBool> (
+    // SnappingBoolParameter rather than AudioParameterBool: the JUCE class keeps
+    // non-boolean values, which makes the saved state and the restored value
+    // disagree (pluginval: "Bypass not restored on setStateInformation").
+    params.push_back (std::make_unique<SnappingBoolParameter> (
         ParamIDs::bypass, "Bypass", false));
 
     params.push_back (std::make_unique<juce::AudioParameterChoice> (
@@ -172,6 +179,18 @@ juce::AudioProcessorValueTreeState::ParameterLayout TubeCompAudioProcessor::crea
         ParamIDs::biasDrive, "Bias Drive",
         juce::NormalisableRange<float> (0.0f, 1.0f, 0.001f), 0.5f));
 
+    params.push_back (std::make_unique<juce::AudioParameterChoice> (
+        ParamIDs::topology, "Detector Mode",
+        juce::StringArray { "Feedforward", "Feedback" }, 1));
+
+    params.push_back (std::make_unique<juce::AudioParameterChoice> (
+        ParamIDs::timeConstant, "Time Constant",
+        juce::StringArray { "Custom", "1", "2", "3", "4", "5", "6" }, 0));
+
+    params.push_back (std::make_unique<juce::AudioParameterChoice> (
+        ParamIDs::linkMode, "Link",
+        juce::StringArray { "Left/Right", "Linked", "Lat/Ver" }, 1));
+
     return { params.begin(), params.end() };
 }
 
@@ -180,41 +199,79 @@ void TubeCompAudioProcessor::updateOversamplingIfNeeded (int newFactorChoice)
     if (newFactorChoice == currentOversamplingChoice)
         return;
 
+    if (! juce::isPositiveAndBelow (newFactorChoice, static_cast<int> (oversamplingStages.size())))
+        return;
+
     currentOversamplingChoice = newFactorChoice;
-    if (newFactorChoice >= 0 && newFactorChoice < static_cast<int> (oversamplingStages.size()))
-    {
-        oversampling = oversamplingStages[static_cast<size_t> (newFactorChoice)].get();
-        setLatencySamples (static_cast<int> (oversampling->getLatencyInSamples()));
-    }
+    oversampling = oversamplingStages[static_cast<size_t> (newFactorChoice)].get();
 }
 
 void TubeCompAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
-    juce::dsp::ProcessSpec spec { sampleRate, static_cast<juce::uint32> (samplesPerBlock),
-                                   static_cast<juce::uint32> (getTotalNumInputChannels()) };
-    dryBuffer.setSize (getTotalNumInputChannels(), samplesPerBlock, false, false, true);
+    const auto safeSamplesPerBlock = static_cast<juce::uint32> (juce::jmax (1, samplesPerBlock));
+    const int numChannels = juce::jmax (1, getTotalNumInputChannels());
 
+    juce::dsp::ProcessSpec spec { sampleRate, safeSamplesPerBlock,
+                                   static_cast<juce::uint32> (numChannels) };
+
+    dryBuffer.setSize (numChannels, static_cast<int> (safeSamplesPerBlock), false, false, true);
+
+    // Build the oversamplers first: the dry reference has to be long enough to
+    // cover the largest look-ahead plus whichever oversampler reports the most
+    // filter delay, so the dry path can be aligned with the wet path exactly.
+    int maxOversamplingLatency = 0;
     for (int choice = 0; choice < static_cast<int> (oversamplingStages.size()); ++choice)
     {
         oversamplingStages[static_cast<size_t> (choice)] = std::make_unique<juce::dsp::Oversampling<float>> (
-            getTotalNumInputChannels(), static_cast<size_t> (choice),
+            numChannels, static_cast<size_t> (choice),
             juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR, true);
-        oversamplingStages[static_cast<size_t> (choice)]->initProcessing (static_cast<size_t> (samplesPerBlock));
+        oversamplingStages[static_cast<size_t> (choice)]->initProcessing (safeSamplesPerBlock);
+        maxOversamplingLatency = juce::jmax (maxOversamplingLatency, static_cast<int> (
+            oversamplingStages[static_cast<size_t> (choice)]->getLatencyInSamples()));
     }
 
+    const int maxLookAheadSamples = static_cast<int> (
+        std::llround (sampleRate * 0.001 * static_cast<double> (Compressor::maxLookAheadMs)));
+    dryDelay.prepare (numChannels, maxLookAheadSamples + maxOversamplingLatency + 32);
+    lastReportedLatency = -1;
+
+    for (int choice = 0; choice < static_cast<int> (saturators.size()); ++choice)
+    {
+        auto oversampledSpec = spec;
+        oversampledSpec.sampleRate = sampleRate * static_cast<double> (1 << choice);
+        saturators[static_cast<size_t> (choice)].prepare (oversampledSpec);
+        triodeStages[static_cast<size_t> (choice)].prepare (oversampledSpec);
+    }
+
+    oversampling = nullptr;
     currentOversamplingChoice = -1;
-    const int choice = static_cast<int> (apvts.getRawParameterValue (ParamIDs::oversample)->load());
-    updateOversamplingIfNeeded (choice);
+    lastAppliedFactor = -1;
+    updateOversamplingIfNeeded (juce::jlimit (0, static_cast<int> (oversamplingStages.size()) - 1,
+        static_cast<int> (apvts.getRawParameterValue (ParamIDs::oversample)->load())));
 
-    juce::dsp::ProcessSpec oversampledSpec = spec;
-    oversampledSpec.sampleRate = sampleRate * static_cast<double> (1 << choice);
-    saturator.prepare (oversampledSpec);
-    triodeStage.prepare (oversampledSpec);
-    compressor.prepare (sampleRate, getTotalNumInputChannels());
+    compressor.prepare (sampleRate, numChannels);
+    compressor.setLookAheadMs (apvts.getRawParameterValue (ParamIDs::lookAhead)->load());
+    compressor.setFeedbackMode (apvts.getRawParameterValue (ParamIDs::topology)->load() > 0.5f);
 
+    // Report latency as soon as the host prepares, so delay compensation is
+    // correct before the first block; processBlock keeps it current afterwards.
+    int initialLatency = static_cast<int> (compressor.getLookAheadSamples());
+    if (oversampling != nullptr)
+        initialLatency += static_cast<int> (oversampling->getLatencyInSamples());
+    lastReportedLatency = initialLatency;
+    setLatencySamples (initialLatency);
+
+    // Smoothed gains must start at the current parameter values -- a default
+    // zero-initialised smoother would fade the whole plugin in over its ramp.
     inputGainSmoothed.reset (sampleRate, 0.02);
+    inputGainSmoothed.setCurrentAndTargetValue (juce::Decibels::decibelsToGain (
+        apvts.getRawParameterValue (ParamIDs::inputGain)->load()));
     outputGainSmoothed.reset (sampleRate, 0.02);
+    outputGainSmoothed.setCurrentAndTargetValue (juce::Decibels::decibelsToGain (
+        apvts.getRawParameterValue (ParamIDs::outputGain)->load()));
     mixSmoothed.reset (sampleRate, 0.02);
+    mixSmoothed.setCurrentAndTargetValue (apvts.getRawParameterValue (ParamIDs::mix)->load());
+
     lastBrightness = lastHarmonics = lastDrive = lastBiasDrive = -1.0f;
 }
 
@@ -238,11 +295,8 @@ void TubeCompAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
 {
     juce::ScopedNoDenormals noDenormals;
 
-    if (apvts.getRawParameterValue (ParamIDs::bypass)->load() > 0.5f)
-        return;
-
-    const int choice = static_cast<int> (apvts.getRawParameterValue (ParamIDs::oversample)->load());
-    updateOversamplingIfNeeded (choice);
+    const int numChannels = buffer.getNumChannels();
+    const int numSamples = buffer.getNumSamples();
 
     inputGainSmoothed.setTargetValue (juce::Decibels::decibelsToGain (
         apvts.getRawParameterValue (ParamIDs::inputGain)->load()));
@@ -250,17 +304,31 @@ void TubeCompAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
         apvts.getRawParameterValue (ParamIDs::outputGain)->load()));
     mixSmoothed.setTargetValue (apvts.getRawParameterValue (ParamIDs::mix)->load());
 
+    const int numQualitySteps = static_cast<int> (oversamplingStages.size());
+    const int requestedQuality = static_cast<int> (apvts.getRawParameterValue (ParamIDs::oversample)->load());
+    updateOversamplingIfNeeded (juce::jlimit (0, numQualitySteps - 1, requestedQuality));
+    const int activeQuality = juce::jlimit (0, numQualitySteps - 1, currentOversamplingChoice);
+    const auto activeFactor = static_cast<size_t> (activeQuality);
+
+    // A quality change swaps to a stage that still holds the tone parameters
+    // from the last time it was active, so force a full re-apply on the switch.
+    if (activeQuality != lastAppliedFactor)
+    {
+        lastAppliedFactor = activeQuality;
+        lastDrive = lastHarmonics = lastBrightness = lastBiasDrive = -1.0f;
+    }
+
     const float driveDb = apvts.getRawParameterValue (ParamIDs::drive)->load();
     const float harmonicsVal = apvts.getRawParameterValue (ParamIDs::harmonics)->load();
     const float brightnessVal = apvts.getRawParameterValue (ParamIDs::brightness)->load();
     const bool useADAA = static_cast<int> (apvts.getRawParameterValue (ParamIDs::antiAlias)->load()) == 1;
 
     const float biasDriveVal = apvts.getRawParameterValue (ParamIDs::biasDrive)->load();
-    if (std::abs (driveDb - lastDrive) > 1.0e-6f) { saturator.setDrive (driveDb); triodeStage.setDrive (driveDb); lastDrive = driveDb; }
-    if (std::abs (harmonicsVal - lastHarmonics) > 1.0e-6f) { saturator.setHarmonicRatio (harmonicsVal); triodeStage.setHarmonicRatio (harmonicsVal); lastHarmonics = harmonicsVal; }
-    if (std::abs (brightnessVal - lastBrightness) > 1.0e-6f) { saturator.setBrightness (brightnessVal); triodeStage.setBrightness (brightnessVal); lastBrightness = brightnessVal; }
-    if (std::abs (biasDriveVal - lastBiasDrive) > 1.0e-6f) { triodeStage.setBiasDrive (biasDriveVal); lastBiasDrive = biasDriveVal; }
-    saturator.setUseADAA (useADAA);
+    if (std::abs (driveDb - lastDrive) > 1.0e-6f) { saturators[activeFactor].setDrive (driveDb); triodeStages[activeFactor].setDrive (driveDb); lastDrive = driveDb; }
+    if (std::abs (harmonicsVal - lastHarmonics) > 1.0e-6f) { saturators[activeFactor].setHarmonicRatio (harmonicsVal); triodeStages[activeFactor].setHarmonicRatio (harmonicsVal); lastHarmonics = harmonicsVal; }
+    if (std::abs (brightnessVal - lastBrightness) > 1.0e-6f) { saturators[activeFactor].setBrightness (brightnessVal); triodeStages[activeFactor].setBrightness (brightnessVal); lastBrightness = brightnessVal; }
+    if (std::abs (biasDriveVal - lastBiasDrive) > 1.0e-6f) { triodeStages[activeFactor].setBiasDrive (biasDriveVal); lastBiasDrive = biasDriveVal; }
+    saturators[activeFactor].setUseADAA (useADAA);
 
     const bool useTriode = static_cast<int> (apvts.getRawParameterValue (ParamIDs::circuitModel)->load()) == 1;
 
@@ -268,20 +336,46 @@ void TubeCompAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
     compressor.setRatio (apvts.getRawParameterValue (ParamIDs::ratio)->load());
     compressor.setAttackMs (apvts.getRawParameterValue (ParamIDs::attack)->load());
     compressor.setReleaseMs (apvts.getRawParameterValue (ParamIDs::release)->load());
+    compressor.setTimeConstant (static_cast<int> (apvts.getRawParameterValue (ParamIDs::timeConstant)->load()));
+    compressor.setLinkMode (static_cast<int> (apvts.getRawParameterValue (ParamIDs::linkMode)->load()));
     compressor.setKneeDb (apvts.getRawParameterValue (ParamIDs::knee)->load());
     compressor.setLookAheadMs (apvts.getRawParameterValue (ParamIDs::lookAhead)->load());
     compressor.setSidechainHPFHz (apvts.getRawParameterValue (ParamIDs::sidechainHPF)->load());
+    compressor.setFeedbackMode (apvts.getRawParameterValue (ParamIDs::topology)->load() > 0.5f);
 
-    jassert (dryBuffer.getNumChannels() >= buffer.getNumChannels()
-             && dryBuffer.getNumSamples() >= buffer.getNumSamples());
-    for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
-        dryBuffer.copyFrom (ch, 0, buffer, ch, 0, buffer.getNumSamples());
+    // Latency = compressor look-ahead + oversampling filter delay, derived from
+    // the parameters just applied so the reported value and the dry alignment
+    // never lag a block behind the control.
+    int totalLatency = static_cast<int> (compressor.getLookAheadSamples());
+    if (oversampling != nullptr)
+        totalLatency += static_cast<int> (oversampling->getLatencyInSamples());
+    if (totalLatency != lastReportedLatency)
+    {
+        lastReportedLatency = totalLatency;
+        setLatencySamples (totalLatency);
+    }
 
-    for (int sample = 0; sample < buffer.getNumSamples(); ++sample)
+    jassert (dryBuffer.getNumChannels() >= numChannels && dryBuffer.getNumSamples() >= numSamples);
+
+    // Capture the dry reference once, delayed by the wet path latency, so the
+    // mix blend and bypass both stay aligned with the processed signal.
+    dryDelay.setDelaySamples (totalLatency);
+    dryDelay.process (buffer, dryBuffer, numSamples);
+
+    if (apvts.getRawParameterValue (ParamIDs::bypass)->load() > 0.5f)
+    {
+        for (int ch = 0; ch < numChannels; ++ch)
+            buffer.copyFrom (ch, 0, dryBuffer, ch, 0, numSamples);
+        return;
+    }
+
+    // Input gain applies to the wet path only; the reference above is the raw
+    // input, which is what a Mix blend should interpolate against.
+    for (int i = 0; i < numSamples; ++i)
     {
         const float gain = inputGainSmoothed.getNextValue();
-        for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
-            buffer.setSample (ch, sample, buffer.getSample (ch, sample) * gain);
+        for (int ch = 0; ch < numChannels; ++ch)
+            buffer.getWritePointer (ch)[i] *= gain;
     }
 
     compressor.process (buffer);
@@ -292,22 +386,22 @@ void TubeCompAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
     juce::dsp::ProcessContextReplacing<float> context (oversampledBlock);
 
     if (useTriode)
-        triodeStage.process (context);
+        triodeStages[activeFactor].process (context);
     else
-        saturator.process (context);
+        saturators[activeFactor].process (context);
 
     oversampling->processSamplesDown (block);
 
-    for (int sample = 0; sample < buffer.getNumSamples(); ++sample)
+    for (int i = 0; i < numSamples; ++i)
     {
         const float outGain = outputGainSmoothed.getNextValue();
         const float mix = mixSmoothed.getNextValue();
 
-        for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+        for (int ch = 0; ch < numChannels; ++ch)
         {
-            const float wet = buffer.getSample (ch, sample) * outGain;
-            const float dry = dryBuffer.getSample (ch, sample);
-            buffer.setSample (ch, sample, juce::jmap (mix, dry, wet));
+            const float wet = buffer.getSample (ch, i) * outGain;
+            const float dry = dryBuffer.getSample (ch, i);
+            buffer.setSample (ch, i, juce::jmap (mix, dry, wet));
         }
     }
 }

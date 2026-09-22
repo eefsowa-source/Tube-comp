@@ -1,9 +1,35 @@
 #include "Compressor.h"
 
+#include <array>
+
+namespace
+{
+constexpr std::array<float, 6> fairchildAttackMs { 0.2f, 0.2f, 0.4f, 0.4f, 0.4f, 0.2f };
+constexpr std::array<float, 6> fairchildReleaseMs { 300.0f, 800.0f, 2000.0f, 5000.0f, 2000.0f, 800.0f };
+constexpr float inverseSqrtTwo = 0.7071067811865475f;
+
+std::array<float, 2> toControlDomain (float left, float right, int linkMode) noexcept
+{
+    if (linkMode == 2)
+        return { (left + right) * inverseSqrtTwo, (left - right) * inverseSqrtTwo };
+
+    return { left, right };
+}
+}
+
 void Compressor::prepare (double newSampleRate, int numChannels)
 {
     sampleRate = newSampleRate;
     channelCount = numChannels;
+
+    // Preallocate the longest possible look-ahead once, here on an allocation-
+    // safe thread. setLookAheadMs() runs from processBlock() and must never
+    // resize (i.e. allocate) the delay buffers mid-stream.
+    const auto maxSamples = static_cast<size_t> (
+        std::llround (sampleRate * 0.001 * static_cast<double> (maxLookAheadMs))) + 1;
+    for (auto& buf : delayBuffer)
+        buf.assign (maxSamples, 0.0f);
+
     setAttackMs (10.0f);
     setReleaseMs (100.0f);
 
@@ -19,26 +45,49 @@ void Compressor::prepare (double newSampleRate, int numChannels)
 
 void Compressor::reset()
 {
-    currentGainDb = 0.0f;
+    currentGainDb.fill (0.0f);
     currentGainDbAtomic.store (0.0f, std::memory_order_relaxed);
+    automaticReleaseState = 0.0f;
     meterEnvelopeLinear.fill (0.0f);
     for (auto& v : meterLevelDb)
         v.store (-100.0f, std::memory_order_relaxed);
     for (auto& buf : delayBuffer)
         std::fill (buf.begin(), buf.end(), 0.0f);
     delayWritePos.fill (0);
+    feedbackOutput.fill (0.0f);
+    sidechainHPFState.fill ({ { 0.0f, 0.0f } });
+}
+
+void Compressor::setFeedbackMode (bool enabled) noexcept
+{
+    if (feedbackMode == enabled)
+        return;
+
+    feedbackMode = enabled;
+    // The detector changes signal domain when the topology is switched. Clear
+    // only detector history so a mode change cannot inject a stale raw/output
+    // sample into the HPF; the gain-reduction ballistics remain continuous.
+    feedbackOutput.fill (0.0f);
     sidechainHPFState.fill ({ { 0.0f, 0.0f } });
 }
 
 void Compressor::setLookAheadMs (float ms) noexcept
 {
-    const auto newLookAheadSamples = static_cast<size_t> (
-        std::llround (juce::jmax (0.0, sampleRate * static_cast<double> (ms) * 0.001)));
-    if (newLookAheadSamples == lookAheadSamples)
+    if (delayBuffer.empty() || delayBuffer[0].empty())
+    {
+        lookAheadSamples = 0;
         return;
-    lookAheadSamples = newLookAheadSamples;
-    for (auto& buf : delayBuffer)
-        buf.resize (lookAheadSamples, 0.0f);
+    }
+
+    const auto maxSamples = delayBuffer[0].size();
+    const auto requested = static_cast<size_t> (
+        std::llround (juce::jmax (0.0, sampleRate * static_cast<double> (ms) * 0.001)));
+
+    const auto clamped = juce::jmin (requested, maxSamples);
+    if (clamped == lookAheadSamples)
+        return;
+
+    lookAheadSamples = clamped;
 }
 
 void Compressor::setSidechainHPFHz (float hz) noexcept
@@ -62,6 +111,34 @@ void Compressor::setReleaseMs (float ms) noexcept
 {
     const double t = juce::jmax (0.0005, static_cast<double> (ms) * 0.001);
     releaseCoeff = static_cast<float> (std::exp (-1.0 / (sampleRate * t)));
+}
+
+void Compressor::setTimeConstant (int choice) noexcept
+{
+    const int clampedChoice = juce::jlimit (0, 6, choice);
+    if (timeConstantChoice == clampedChoice)
+        return;
+
+    timeConstantChoice = clampedChoice;
+    automaticReleaseState = 0.0f;
+
+    if (timeConstantChoice > 0)
+    {
+        const auto index = static_cast<size_t> (timeConstantChoice - 1);
+        setAttackMs (fairchildAttackMs[index]);
+        setReleaseMs (fairchildReleaseMs[index]);
+    }
+}
+
+void Compressor::setLinkMode (int mode) noexcept
+{
+    const int clamped = juce::jlimit (0, 2, mode);
+    if (linkMode == clamped)
+        return;
+
+    linkMode = clamped;
+    feedbackOutput.fill (0.0f);
+    sidechainHPFState.fill ({ { 0.0f, 0.0f } });
 }
 
 float Compressor::computeTargetGainReductionDb (float levelDb) const noexcept
@@ -95,7 +172,7 @@ void Compressor::process (juce::AudioBuffer<float>& buffer) noexcept
 
     for (int i = 0; i < numSamples; ++i)
     {
-        float peak = 0.0f;
+        std::array<float, 2> inputSamples { 0.0f, 0.0f };
 
         // Detect the current sample and apply the resulting gain to the sample
         // that is leaving the delay line. This makes look-ahead a real latency.
@@ -103,44 +180,122 @@ void Compressor::process (juce::AudioBuffer<float>& buffer) noexcept
         for (int ch = 0; ch < numChannels; ++ch)
         {
             const float sample = buffer.getSample (ch, i);
+            inputSamples[static_cast<size_t> (ch)] = sample;
 
-            // Read before overwriting: a buffer of N samples then produces an
-            // exact N-sample delay (the old write position is the oldest item).
-            if (lookAheadSamples > 0 && static_cast<size_t> (ch) < delayBuffer.size())
+            // Keep the ring at its prepared maximum capacity even when the
+            // active look-ahead is shorter (or zero). The parameter is
+            // automatable; using lookAheadSamples as the modulo length would
+            // discard history whenever the delay changed, so an impulse could
+            // disappear when a host switched from 0 ms back to look-ahead.
+            if (static_cast<size_t> (ch) < delayBuffer.size()
+                && ! delayBuffer[static_cast<size_t> (ch)].empty())
             {
                 const auto channelIndex = static_cast<size_t> (ch);
-                delayedSamples[channelIndex] = delayBuffer[channelIndex][delayWritePos[channelIndex]];
+                const auto& ring = delayBuffer[channelIndex];
+                const auto capacity = ring.size();
+
+                if (lookAheadSamples > 0)
+                {
+                    const auto readPos = (delayWritePos[channelIndex] + capacity - lookAheadSamples) % capacity;
+                    delayedSamples[channelIndex] = ring[readPos];
+                }
+                else
+                {
+                    delayedSamples[channelIndex] = sample;
+                }
+
                 delayBuffer[channelIndex][delayWritePos[channelIndex]] = sample;
-                delayWritePos[channelIndex] = (delayWritePos[channelIndex] + 1) % lookAheadSamples;
+                delayWritePos[channelIndex] = (delayWritePos[channelIndex] + 1) % capacity;
             }
             else
             {
                 delayedSamples[static_cast<size_t> (ch)] = sample;
             }
 
-            // Sidechain HPF runs on signed audio per channel, then the filtered
-            // magnitudes are peak-linked. This keeps stereo linking while
-            // preventing bass energy from dominating the detector.
-            auto& hpf = sidechainHPFState[static_cast<size_t> (ch)];
-            const float filtered = sample - hpf[0] + sidechainHPFCoeff * hpf[1];
-            hpf[0] = sample;
-            hpf[1] = filtered;
-            peak = juce::jmax (peak, std::abs (filtered));
         }
 
-        const float levelDb = juce::Decibels::gainToDecibels (peak, -100.0f);
-        const float targetGainDb = computeTargetGainReductionDb (levelDb);
+    // M/S (Lat/Ver) requires a stereo pair.  A mono instance falls back to
+    // linked detection rather than accidentally running a one-channel matrix.
+    const int effectiveLinkMode = (linkMode == 2 && numChannels >= 2) ? 2
+                                                                       : (linkMode == 2 ? 1 : linkMode);
+        const auto detectorSource = feedbackMode
+            ? feedbackOutput
+            : toControlDomain (inputSamples[0], inputSamples[1], effectiveLinkMode);
+        std::array<float, 2> filtered { 0.0f, 0.0f };
+        for (size_t path = 0; path < filtered.size(); ++path)
+        {
+            auto& hpf = sidechainHPFState[path];
+            filtered[path] = detectorSource[path] - hpf[0] + sidechainHPFCoeff * hpf[1];
+            hpf[0] = detectorSource[path];
+            hpf[1] = filtered[path];
+        }
 
-        // Attack when gain reduction needs to increase (signal got louder),
-        // release when it needs to decrease (signal got quieter).
-        const float coeff = (targetGainDb > currentGainDb) ? attackCoeff : releaseCoeff;
-        currentGainDb = targetGainDb + coeff * (currentGainDb - targetGainDb);
-        currentGainDbAtomic.store (currentGainDb, std::memory_order_relaxed);
+        std::array<float, 2> targetGainDb { 0.0f, 0.0f };
+        if (effectiveLinkMode == 1)
+        {
+            const float peak = juce::jmax (std::abs (filtered[0]), std::abs (filtered[1]));
+            const float target = computeTargetGainReductionDb (
+                juce::Decibels::gainToDecibels (peak, -100.0f));
+            targetGainDb = { target, target };
+        }
+        else
+        {
+            for (size_t path = 0; path < targetGainDb.size(); ++path)
+                targetGainDb[path] = computeTargetGainReductionDb (
+                    juce::Decibels::gainToDecibels (std::abs (filtered[path]), -100.0f));
+        }
 
-        const float linearGain = juce::Decibels::decibelsToGain (-currentGainDb);
+        const float maxTarget = juce::jmax (targetGainDb[0], targetGainDb[1]);
+        if (timeConstantChoice >= 5)
+        {
+            const float targetState = maxTarget > 0.5f ? 1.0f : 0.0f;
+            const float stateCoeff = targetState > automaticReleaseState
+                ? std::exp (-1.0f / static_cast<float> (sampleRate * 0.1))
+                : std::exp (-1.0f / static_cast<float> (sampleRate * 0.75));
+            automaticReleaseState = targetState + stateCoeff * (automaticReleaseState - targetState);
+        }
 
-        for (int ch = 0; ch < numChannels; ++ch)
-            buffer.setSample (ch, i, delayedSamples[static_cast<size_t> (ch)] * linearGain);
+        float releaseCoeffForSample = releaseCoeff;
+        if (timeConstantChoice >= 5)
+        {
+            float releaseSeconds = timeConstantChoice == 5 ? 2.0f : 0.8f;
+            if (automaticReleaseState > 0.20f)
+                releaseSeconds = 10.0f;
+            if (timeConstantChoice == 6 && automaticReleaseState > 0.75f)
+                releaseSeconds = 25.0f;
+            releaseCoeffForSample = static_cast<float> (std::exp (-1.0 / (sampleRate * releaseSeconds)));
+        }
+
+        for (size_t path = 0; path < currentGainDb.size(); ++path)
+        {
+            const float coeff = (targetGainDb[path] > currentGainDb[path]) ? attackCoeff : releaseCoeffForSample;
+            currentGainDb[path] = targetGainDb[path] + coeff * (currentGainDb[path] - targetGainDb[path]);
+        }
+        currentGainDbAtomic.store (juce::jmax (currentGainDb[0], currentGainDb[1]),
+                                   std::memory_order_relaxed);
+
+        if (effectiveLinkMode == 2)
+        {
+            const auto delayedControl = toControlDomain (delayedSamples[0], delayedSamples[1], effectiveLinkMode);
+            const float processedVertical = delayedControl[0]
+                * juce::Decibels::decibelsToGain (-currentGainDb[0]);
+            const float processedLateral = delayedControl[1]
+                * juce::Decibels::decibelsToGain (-currentGainDb[1]);
+            buffer.setSample (0, i, (processedVertical + processedLateral) * inverseSqrtTwo);
+            buffer.setSample (1, i, (processedVertical - processedLateral) * inverseSqrtTwo);
+            feedbackOutput = { processedVertical, processedLateral };
+        }
+        else
+        {
+            for (int ch = 0; ch < numChannels; ++ch)
+            {
+                const auto channelIndex = static_cast<size_t> (ch);
+                const float outputSample = delayedSamples[channelIndex]
+                    * juce::Decibels::decibelsToGain (-currentGainDb[channelIndex]);
+                buffer.setSample (ch, i, outputSample);
+                feedbackOutput[channelIndex] = outputSample;
+            }
+        }
     }
 
     // VU-style output metering, per channel, instant attack / slow release.

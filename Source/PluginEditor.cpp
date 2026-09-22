@@ -2,11 +2,14 @@
 
 namespace
 {
-    const juce::Colour panelTop    { 0xff3a352c };
-    const juce::Colour panelBottom { 0xff211e19 };
-    const juce::Colour screwColour { 0xff8a8578 };
-    const juce::Colour creamText   { 0xfff2ecd8 };
-    const juce::Colour dimText     { 0xffa39c88 };
+    // PuigChild/Fairchild-class reference palette: slate-blue faceplate,
+    // warm cream legends, black controls, and restrained red/gold accents.
+    // This is an original EON surface, not a pixel copy of a commercial UI.
+    const juce::Colour panelTop    { 0xff71838a };
+    const juce::Colour panelBottom { 0xff2d3a40 };
+    const juce::Colour screwColour { 0xffb9b6aa };
+    const juce::Colour creamText   { 0xfff4e9c5 };
+    const juce::Colour dimText     { 0xffd2c8ac };
 
     constexpr int cardHeaderHeight = 38;
 
@@ -174,6 +177,27 @@ TubeCompAudioProcessorEditor::TubeCompAudioProcessorEditor (TubeCompAudioProcess
     circuitModelLabel.setColour (juce::Label::textColourId, creamText);
     addAndMakeVisible (circuitModelLabel);
 
+    topologyBox.addItemList ({ "Feedforward", "Feedback" }, 1);
+    addAndMakeVisible (topologyBox);
+    topologyLabel.setText ("Detector Mode", juce::dontSendNotification);
+    topologyLabel.setJustificationType (juce::Justification::centred);
+    topologyLabel.setColour (juce::Label::textColourId, creamText);
+    addAndMakeVisible (topologyLabel);
+
+    timeConstantBox.addItemList ({ "Custom", "1", "2", "3", "4", "5", "6" }, 1);
+    addAndMakeVisible (timeConstantBox);
+    timeConstantLabel.setText ("Time Constant", juce::dontSendNotification);
+    timeConstantLabel.setJustificationType (juce::Justification::centred);
+    timeConstantLabel.setColour (juce::Label::textColourId, creamText);
+    addAndMakeVisible (timeConstantLabel);
+
+    linkModeBox.addItemList ({ "Left/Right", "Linked", "Lat/Ver" }, 1);
+    addAndMakeVisible (linkModeBox);
+    linkModeLabel.setText ("Link", juce::dontSendNotification);
+    linkModeLabel.setJustificationType (juce::Justification::centred);
+    linkModeLabel.setColour (juce::Label::textColourId, creamText);
+    addAndMakeVisible (linkModeLabel);
+
     auto& apvts = processorRef.apvts;
     thresholdAttachment = std::make_unique<SliderAttachment> (apvts, ParamIDs::threshold, thresholdSlider);
     ratioAttachment      = std::make_unique<SliderAttachment> (apvts, ParamIDs::ratio, ratioSlider);
@@ -192,6 +216,9 @@ TubeCompAudioProcessorEditor::TubeCompAudioProcessorEditor (TubeCompAudioProcess
     biasDriveAttachment  = std::make_unique<SliderAttachment> (apvts, ParamIDs::biasDrive, biasDriveSlider);
     oversampleAttachment = std::make_unique<ComboBoxAttachment> (apvts, ParamIDs::oversample, oversampleBox);
     circuitModelAttachment = std::make_unique<ComboBoxAttachment> (apvts, ParamIDs::circuitModel, circuitModelBox);
+    topologyAttachment = std::make_unique<ComboBoxAttachment> (apvts, ParamIDs::topology, topologyBox);
+    timeConstantAttachment = std::make_unique<ComboBoxAttachment> (apvts, ParamIDs::timeConstant, timeConstantBox);
+    linkModeAttachment = std::make_unique<ComboBoxAttachment> (apvts, ParamIDs::linkMode, linkModeBox);
     bypassAttachment      = std::make_unique<ButtonAttachment> (apvts, ParamIDs::bypass, bypassButton);
 
     setResizable (true, true);
@@ -214,19 +241,19 @@ void TubeCompAudioProcessorEditor::paint (juce::Graphics& g)
     if (bounds.isEmpty())
         return;
 
-    // Brushed dark-metal chassis.
+    // Brushed blue-grey faceplate.
     juce::ColourGradient panelGrad (panelTop, bounds.getX(), bounds.getY(),
                                      panelBottom, bounds.getX(), bounds.getBottom(), false);
     g.setGradientFill (panelGrad);
     g.fillAll();
 
     // Subtle horizontal brushed-metal streaks.
-    g.setColour (juce::Colours::white.withAlpha (0.02f));
+    g.setColour (juce::Colours::white.withAlpha (0.035f));
     for (float yPos = 0.0f; yPos < bounds.getHeight(); yPos += 3.0f)
         g.drawLine (0.0f, yPos, bounds.getWidth(), yPos, 1.0f);
 
     // Recessed rack rails at the sides of the faceplate.
-    g.setColour (juce::Colours::black.withAlpha (0.32f));
+    g.setColour (juce::Colours::black.withAlpha (0.38f));
     g.fillRect (0.0f, 0.0f, 8.0f, bounds.getHeight());
     g.fillRect (bounds.getRight() - 8.0f, 0.0f, 8.0f, bounds.getHeight());
     g.setColour (juce::Colours::white.withAlpha (0.08f));
@@ -243,17 +270,17 @@ void TubeCompAudioProcessorEditor::paint (juce::Graphics& g)
     {
         g.setColour (juce::Colours::black.withAlpha (0.55f));
         g.fillRoundedRectangle (r.translated (2.0f, 4.0f), 9.0f);
-        g.setColour (juce::Colour (0xff100f0d).withAlpha (0.98f));
+        g.setColour (juce::Colour (0xff1b252a).withAlpha (0.98f));
         g.fillRoundedRectangle (r, 8.0f);
-        g.setColour (juce::Colour (0xff423a2d).withAlpha (0.45f));
+        g.setColour (juce::Colour (0xff9aa6a6).withAlpha (0.32f));
         g.drawRoundedRectangle (r.reduced (4.0f), 5.0f, 1.0f);
         g.setColour (accent.withAlpha (0.85f));
         g.drawRoundedRectangle (r.reduced (0.7f), 8.0f, 1.2f);
-        g.setColour (juce::Colours::white.withAlpha (0.10f));
+        g.setColour (juce::Colours::white.withAlpha (0.16f));
         g.drawLine (r.getX() + 9.0f, r.getY() + 2.0f, r.getRight() - 9.0f, r.getY() + 2.0f, 1.0f);
-        g.setColour (juce::Colours::black.withAlpha (0.72f));
+        g.setColour (juce::Colours::black.withAlpha (0.62f));
         g.drawLine (r.getX() + 9.0f, r.getBottom() - 2.0f, r.getRight() - 9.0f, r.getBottom() - 2.0f, 1.0f);
-        g.setColour (accent.withAlpha (0.20f));
+        g.setColour (accent.withAlpha (0.18f));
         g.fillRoundedRectangle ({ r.getX() + 10.0f, r.getY() + 10.0f, 220.0f, 18.0f }, 3.0f);
         g.setColour (accent.withAlpha (0.45f));
         g.drawLine (r.getX() + 12.0f, r.getY() + 35.0f, r.getRight() - 12.0f, r.getY() + 35.0f, 1.0f);
@@ -268,22 +295,23 @@ void TubeCompAudioProcessorEditor::paint (juce::Graphics& g)
     card (layout.compressorCard.toFloat(), juce::Colour (0xff8a6e45), "VARIABLE-MU COMPRESSOR");
     card (layout.tubeCard.toFloat(), juce::Colour (0xff6e5540), "12AX7 / WDF TUBE CIRCUIT");
 
-    // Logo / title, Fairchild-esque italic script feel.
+    // Original EON badge: vintage compressor hierarchy without copying a
+    // commercial product logo or faceplate.
     auto titleArea = layout.title;
     const auto productTitleArea = titleArea.removeFromTop (30);
     const auto signatureArea = titleArea;
     g.setColour (creamText);
-    g.setFont (juce::FontOptions (26.0f, juce::Font::italic | juce::Font::bold));
+    g.setFont (juce::FontOptions (28.0f, juce::Font::italic | juce::Font::bold));
     g.drawText ("EON-Vari mu DSP", productTitleArea, juce::Justification::centred);
 
     // Handwritten signature beneath the product name.
     g.setColour (creamText.withAlpha (0.86f));
-    g.setFont (juce::FontOptions ("Snell Roundhand", 16.0f, juce::Font::plain));
-    g.drawText ("aoi yume", signatureArea, juce::Justification::centred);
+    g.setFont (juce::FontOptions ("Snell Roundhand", 15.0f, juce::Font::plain));
+    g.drawText ("DUAL-MONO VARIABLE-MU", signatureArea, juce::Justification::centred);
 
     g.setColour (dimText.withAlpha (0.7f));
     g.setFont (juce::FontOptions (9.0f));
-    g.drawText ("EON AUDIO  /  VARIABLE-MU ANALOG MODELING SERIES", layout.footer,
+    g.drawText ("EON AUDIO  /  670-STYLE VARIABLE-MU CONTROL SURFACE", layout.footer,
                 juce::Justification::centred);
 
 }
@@ -327,7 +355,7 @@ void TubeCompAudioProcessorEditor::resized()
                     { &outputGainSlider, &outputGainLabel },
                     { &biasDriveSlider, &biasDriveLabel } });
 
-    const int utilityWidth = juce::jmin (148, utilityRow.getWidth() / 4);
+    const int utilityWidth = juce::jmin (180, utilityRow.getWidth() / 5);
     auto oversampleArea = utilityRow.removeFromLeft (utilityWidth);
     oversampleLabel.setBounds (oversampleArea.removeFromTop (16));
     oversampleBox.setBounds (oversampleArea.reduced (8, 0));
@@ -335,4 +363,16 @@ void TubeCompAudioProcessorEditor::resized()
     auto circuitArea = utilityRow.removeFromLeft (utilityWidth);
     circuitModelLabel.setBounds (circuitArea.removeFromTop (16));
     circuitModelBox.setBounds (circuitArea.reduced (8, 0));
+    utilityRow.removeFromLeft (12);
+    auto topologyArea = utilityRow.removeFromLeft (utilityWidth);
+    topologyLabel.setBounds (topologyArea.removeFromTop (16));
+    topologyBox.setBounds (topologyArea.reduced (8, 0));
+    utilityRow.removeFromLeft (12);
+    auto timeConstantArea = utilityRow.removeFromLeft (utilityWidth);
+    timeConstantLabel.setBounds (timeConstantArea.removeFromTop (16));
+    timeConstantBox.setBounds (timeConstantArea.reduced (8, 0));
+    utilityRow.removeFromLeft (12);
+    auto linkModeArea = utilityRow.removeFromLeft (utilityWidth);
+    linkModeLabel.setBounds (linkModeArea.removeFromTop (16));
+    linkModeBox.setBounds (linkModeArea.reduced (8, 0));
 }

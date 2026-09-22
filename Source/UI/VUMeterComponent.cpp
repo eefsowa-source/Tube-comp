@@ -36,11 +36,11 @@ void VUMeterComponent::paint (juce::Graphics& g)
     // Deep shadow and double-machined bezel.
     g.setColour (juce::Colours::black.withAlpha (0.65f));
     g.fillRoundedRectangle (bounds.translated (2.0f, 3.0f), 7.0f);
-    juce::ColourGradient bezelGrad (juce::Colour (0xffd8d3c4), bounds.getX(), bounds.getY(),
-                                    juce::Colour (0xff4b473e), bounds.getRight(), bounds.getBottom(), true);
+    juce::ColourGradient bezelGrad (juce::Colour (0xffc8d0cb), bounds.getX(), bounds.getY(),
+                                    juce::Colour (0xff465760), bounds.getRight(), bounds.getBottom(), true);
     g.setGradientFill (bezelGrad);
     g.fillRoundedRectangle (bounds, 7.0f);
-    g.setColour (juce::Colour (0xff11100e));
+    g.setColour (juce::Colour (0xff11181c));
     g.fillRoundedRectangle (bounds.reduced (4.0f), 5.0f);
 
     auto face = bounds.reduced (8.0f);

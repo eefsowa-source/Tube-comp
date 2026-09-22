@@ -25,11 +25,11 @@ private:
     juce::Slider thresholdSlider, ratioSlider, attackSlider, releaseSlider, kneeSlider;
     juce::Slider lookAheadSlider, sidechainHPFSlider, biasDriveSlider;
     juce::Slider inputGainSlider, outputGainSlider, driveSlider, harmonicsSlider, brightnessSlider, mixSlider;
-    juce::ComboBox oversampleBox, circuitModelBox;
+    juce::ComboBox oversampleBox, circuitModelBox, topologyBox, timeConstantBox, linkModeBox;
     juce::Label thresholdLabel, ratioLabel, attackLabel, releaseLabel, kneeLabel;
     juce::Label lookAheadLabel, sidechainHPFLabel, biasDriveLabel;
     juce::Label inputGainLabel, outputGainLabel, driveLabel, harmonicsLabel, brightnessLabel, mixLabel,
-        oversampleLabel, circuitModelLabel;
+        oversampleLabel, circuitModelLabel, topologyLabel, timeConstantLabel, linkModeLabel;
     juce::Label compressorSectionLabel, tubeSectionLabel;
 
     using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;
@@ -41,7 +41,8 @@ private:
     std::unique_ptr<SliderAttachment> lookAheadAttachment, sidechainHPFAttachment, biasDriveAttachment;
     std::unique_ptr<SliderAttachment> inputGainAttachment, outputGainAttachment, driveAttachment,
         harmonicsAttachment, brightnessAttachment, mixAttachment;
-    std::unique_ptr<ComboBoxAttachment> oversampleAttachment, circuitModelAttachment;
+    std::unique_ptr<ComboBoxAttachment> oversampleAttachment, circuitModelAttachment, topologyAttachment,
+        timeConstantAttachment, linkModeAttachment;
     std::unique_ptr<ButtonAttachment> bypassAttachment;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (TubeCompAudioProcessorEditor)

@@ -70,6 +70,13 @@ add_executable(eonchild_CompressorProgramTest
 target_link_libraries(eonchild_CompressorProgramTest PRIVATE juce::juce_audio_basics juce::juce_recommended_config_flags)
 target_compile_definitions(eonchild_CompressorProgramTest PRIVATE JUCE_STANDALONE_APPLICATION=1)
 
+add_executable(eonchild_CompressorFeedbackTest
+    Tests/CompressorFeedbackTest.cpp
+    Source/DSP/Compressor.cpp)
+
+target_link_libraries(eonchild_CompressorFeedbackTest PRIVATE juce::juce_audio_basics juce::juce_recommended_config_flags)
+target_compile_definitions(eonchild_CompressorFeedbackTest PRIVATE JUCE_STANDALONE_APPLICATION=1)
+
 add_executable(eonchild_TriodeBiasProgramTest
     Tests/TriodeBiasProgramTest.cpp
     Source/DSP/TriodeStage.cpp)
@@ -77,8 +84,65 @@ add_executable(eonchild_TriodeBiasProgramTest
 target_link_libraries(eonchild_TriodeBiasProgramTest PRIVATE juce::juce_dsp juce::juce_recommended_config_flags)
 target_compile_definitions(eonchild_TriodeBiasProgramTest PRIVATE JUCE_STANDALONE_APPLICATION=1)
 
+add_executable(eonchild_KorenSlopeTest
+    Tests/KorenSlopeTest.cpp)
+
+target_link_libraries(eonchild_KorenSlopeTest PRIVATE juce::juce_dsp juce::juce_recommended_config_flags)
+target_compile_definitions(eonchild_KorenSlopeTest PRIVATE JUCE_STANDALONE_APPLICATION=1)
+
+add_executable(eonchild_DryDelayLineTest
+    Tests/DryDelayLineTest.cpp)
+
+target_link_libraries(eonchild_DryDelayLineTest PRIVATE juce::juce_audio_basics juce::juce_recommended_config_flags)
+target_compile_definitions(eonchild_DryDelayLineTest PRIVATE JUCE_STANDALONE_APPLICATION=1)
+
+add_executable(eonchild_SaturatorTest
+    Tests/SaturatorTest.cpp
+    Source/DSP/TubeSaturator.cpp)
+
+target_link_libraries(eonchild_SaturatorTest PRIVATE juce::juce_dsp juce::juce_recommended_config_flags)
+target_compile_definitions(eonchild_SaturatorTest PRIVATE JUCE_STANDALONE_APPLICATION=1)
+
+# End-to-end processor check: links the plugin's own shared code so it exercises
+# the real processBlock latency reporting, dry alignment, and bypass path.
+add_executable(eonchild_ProcessorTest
+    Tests/ProcessorTest.cpp)
+
+target_link_libraries(eonchild_ProcessorTest PRIVATE
+    eonchild
+    juce::juce_audio_utils
+    juce::juce_dsp
+    juce::juce_recommended_config_flags)
+
+# Measurement harness, not a pass/fail test: prints the tone/aliasing/cost baseline
+# for every quality, model and anti-aliasing setting.
+add_executable(eonchild_SoundBaseline
+    Tools/sound_baseline.cpp)
+
+target_link_libraries(eonchild_SoundBaseline PRIVATE
+    eonchild
+    juce::juce_audio_utils
+    juce::juce_dsp
+    juce::juce_recommended_config_flags)
+
+# Deterministic render + sample-exact comparison tool, used to prove that a DSP
+# change is a no-op before any listening or cost measurement.
+add_executable(eonchild_NullRender
+    Tools/null_render.cpp)
+
+target_link_libraries(eonchild_NullRender PRIVATE
+    eonchild
+    juce::juce_audio_utils
+    juce::juce_dsp
+    juce::juce_recommended_config_flags)
+
 enable_testing()
 add_test(NAME dsp_sanity COMMAND eonchild_DspTest)
 add_test(NAME compressor_sanity COMMAND eonchild_CompressorTest)
 add_test(NAME compressor_program COMMAND eonchild_CompressorProgramTest)
+add_test(NAME compressor_feedback COMMAND eonchild_CompressorFeedbackTest)
 add_test(NAME triode_bias_program COMMAND eonchild_TriodeBiasProgramTest)
+add_test(NAME dry_delay_line COMMAND eonchild_DryDelayLineTest)
+add_test(NAME saturator_shape COMMAND eonchild_SaturatorTest)
+add_test(NAME processor_latency COMMAND eonchild_ProcessorTest)
+add_test(NAME koren_slope COMMAND eonchild_KorenSlopeTest)

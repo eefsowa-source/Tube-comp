@@ -2,14 +2,14 @@
 
 namespace
 {
-    const juce::Colour panelDark      { 0xff2a2622 };
-    const juce::Colour knobBodyDark   { 0xff17140f };
-    const juce::Colour knobBodyLight  { 0xff3a352c };
-    const juce::Colour chromeLight    { 0xffd8d4c8 };
-    const juce::Colour chromeShadow   { 0xff5a564c };
-    const juce::Colour indexCream     { 0xfff2ecd8 };
-    const juce::Colour ledGreen       { 0xff6fff6a };
-    const juce::Colour ledRed         { 0xffb5352c };
+    const juce::Colour panelDark      { 0xff202a2f };
+    const juce::Colour knobBodyDark   { 0xff10171b };
+    const juce::Colour knobBodyLight  { 0xff40545d };
+    const juce::Colour chromeLight    { 0xffe1d7bc };
+    const juce::Colour chromeShadow   { 0xff65757c };
+    const juce::Colour indexCream     { 0xfff4e9c5 };
+    const juce::Colour ledGreen       { 0xff81ff72 };
+    const juce::Colour ledRed         { 0xffd85748 };
 }
 
 TubeCompLookAndFeel::TubeCompLookAndFeel()

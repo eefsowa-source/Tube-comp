@@ -27,6 +27,72 @@ float steadyToneGainReduction (float frequencyHz, float sidechainHz)
     compressor.process (block);
     return compressor.getCurrentGainReductionDb();
 }
+
+float releaseAfterSilence (int timeConstantChoice)
+{
+    Compressor compressor;
+    compressor.prepare (sampleRate, 1);
+    compressor.setThresholdDb (-24.0f);
+    compressor.setRatio (4.0f);
+    compressor.setKneeDb (0.0f);
+    compressor.setLookAheadMs (0.0f);
+    compressor.setSidechainHPFHz (20.0f);
+    compressor.setFeedbackMode (true);
+    compressor.setTimeConstant (timeConstantChoice);
+
+    juce::AudioBuffer<float> sample (1, 1);
+    for (int i = 0; i < static_cast<int> (sampleRate * 0.5); ++i)
+    {
+        sample.setSample (0, 0, 0.8f * std::sin (2.0 * juce::MathConstants<double>::pi
+                                                  * 1000.0 * i / sampleRate));
+        compressor.process (sample);
+    }
+
+    sample.clear();
+    for (int i = 0; i < static_cast<int> (sampleRate * 0.1); ++i)
+        compressor.process (sample);
+
+    return compressor.getCurrentGainReductionDb();
+}
+
+float renderLinkedLevel (int linkMode)
+{
+    Compressor compressor;
+    compressor.prepare (sampleRate, 2);
+    compressor.setThresholdDb (-24.0f);
+    compressor.setRatio (4.0f);
+    compressor.setKneeDb (0.0f);
+    compressor.setLookAheadMs (0.0f);
+    compressor.setSidechainHPFHz (20.0f);
+    compressor.setFeedbackMode (true);
+    compressor.setLinkMode (linkMode);
+
+    juce::AudioBuffer<float> block (2, 64);
+    double sumSquares = 0.0;
+    int count = 0;
+    for (int blockIndex = 0; blockIndex < static_cast<int> (sampleRate * 0.5 / 64); ++blockIndex)
+    {
+        for (int i = 0; i < block.getNumSamples(); ++i)
+        {
+            const int sampleIndex = blockIndex * block.getNumSamples() + i;
+            const float tone = std::sin (2.0 * juce::MathConstants<double>::pi
+                                         * 1000.0 * sampleIndex / sampleRate);
+            block.setSample (0, i, 0.9f * tone);
+            block.setSample (1, i, 0.25f * tone);
+        }
+
+        compressor.process (block);
+        if (blockIndex > 200)
+            for (int i = 0; i < block.getNumSamples(); ++i)
+            {
+                const double sampleValue = block.getSample (1, i);
+                sumSquares += sampleValue * sampleValue;
+                ++count;
+            }
+    }
+
+    return static_cast<float> (std::sqrt (sumSquares / juce::jmax (1, count)));
+}
 }
 
 int main()
@@ -90,6 +156,24 @@ int main()
                  static_cast<double> (settledGr), static_cast<double> (release100msGr),
                  static_cast<double> (releaseRatio));
     passed = passed && settledGr > 8.0f && releaseRatio > 0.30f && releaseRatio < 0.45f;
+
+    const float tc1Release = releaseAfterSilence (1);
+    const float tc4Release = releaseAfterSilence (4);
+    std::printf ("Fairchild time constants: TC1 %.2f dB, TC4 %.2f dB after 100 ms\n",
+                 static_cast<double> (tc1Release), static_cast<double> (tc4Release));
+    passed = passed && tc4Release > tc1Release + 1.0f;
+
+    const float independentRight = renderLinkedLevel (0);
+    const float linkedRight = renderLinkedLevel (1);
+    const float lateralVerticalRight = renderLinkedLevel (2);
+    std::printf ("link modes: L/R %.5f, linked %.5f, Lat/Ver %.5f\n",
+                 static_cast<double> (independentRight), static_cast<double> (linkedRight),
+                 static_cast<double> (lateralVerticalRight));
+    passed = passed && std::isfinite (independentRight)
+                   && std::isfinite (linkedRight)
+                   && std::isfinite (lateralVerticalRight)
+                   && linkedRight < independentRight * 0.95f
+                   && lateralVerticalRight > 0.0f;
 
     std::printf (passed ? "PASS\n" : "FAIL\n");
     return passed ? 0 : 1;

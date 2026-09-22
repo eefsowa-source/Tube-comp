@@ -23,20 +23,62 @@ struct KorenTriodeParams
     double kvb  = 300.0;   // low-plate-voltage knee correction
 };
 
-inline double korenPlateCurrent (double Vgk, double Vpk, const KorenTriodeParams& p) noexcept
+/** Plate current and its derivative with respect to Vpk, in closed form.
+
+    The Newton solver needs the slope as well as the value. Deriving it
+    analytically costs one transcendental evaluation per iteration, where a
+    central difference needs three, so this is the difference between roughly
+    three and one evaluation per Newton step.
+
+    With s = 1/mu + Vgk/sqrt(Kvb + Vpk^2), z = Kp*s and L = ln(1 + exp(z)):
+
+        E1        = (Vpk/Kp) * L
+        dE1/dVpk  = L/Kp + Vpk * logistic(z) * ds/dVpk
+        ds/dVpk   = -Vgk * Vpk * (Kvb + Vpk^2)^(-3/2)
+        dIp/dVpk  = (Ex/Kg1) * E1^(Ex-1) * dE1/dVpk
+*/
+struct KorenPlateResult
 {
+    double ip = 0.0;
+    double dIpdVpk = 0.0;
+};
+
+inline KorenPlateResult korenPlateCurrentAndSlope (double Vgk, double Vpk,
+                                                   const KorenTriodeParams& p) noexcept
+{
+    KorenPlateResult result;
+
     const double kvbTerm = p.kvb + Vpk * Vpk;
     if (kvbTerm <= 1.0e-9)
-        return 0.0;
+        return result;
 
-    const double e1Arg = p.kp * (1.0 / p.mu + Vgk / std::sqrt (kvbTerm));
+    const double sqrtKvbTerm = std::sqrt (kvbTerm);
+    const double s = 1.0 / p.mu + Vgk / sqrtKvbTerm;
+    const double e1Arg = p.kp * s;
 
     // log(1 + exp(x)) computed in a way that stays finite for large x.
     const double softplus = (e1Arg > 30.0) ? e1Arg : std::log1p (std::exp (e1Arg));
 
     const double e1 = (Vpk / p.kp) * softplus;
-    if (e1 <= 0.0)
-        return 0.0;
 
-    return std::pow (e1, p.ex) / p.kg1;
+    // Cutoff: the model carries no current, and the slope is zero with it.
+    if (e1 <= 0.0)
+        return result;
+
+    const double e1Pow = std::pow (e1, p.ex);
+    result.ip = e1Pow / p.kg1;
+
+    // logistic(z) saturates to 0 or 1 without overflow, so the slope stays
+    // finite in the deep-cutoff and deep-conduction regions alike.
+    const double logistic = 1.0 / (1.0 + std::exp (-e1Arg));
+    const double dsDVpk = -Vgk * Vpk / (kvbTerm * sqrtKvbTerm);
+    const double dE1dVpk = softplus / p.kp + Vpk * logistic * dsDVpk;
+    result.dIpdVpk = (p.ex / p.kg1) * (e1Pow / e1) * dE1dVpk;
+
+    return result;
+}
+
+inline double korenPlateCurrent (double Vgk, double Vpk, const KorenTriodeParams& p) noexcept
+{
+    return korenPlateCurrentAndSlope (Vgk, Vpk, p).ip;
 }

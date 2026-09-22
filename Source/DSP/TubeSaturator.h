@@ -16,6 +16,14 @@
 class TubeSaturator
 {
 public:
+    /** Output trim that level-matches this path to the WDF triode path, measured
+        with Tools/sound_baseline.cpp. The two models differ in both static gain
+        and compression, so one constant cannot match every operating point: this
+        value keeps the normal working region (drive plus input at or below 0 dB)
+        inside 0.5 dB, and the residual under combined heavy drive is reported by
+        the baseline tool. */
+    static constexpr float modelMatchGainDb = 8.0f;
+
     void prepare (const juce::dsp::ProcessSpec& spec);
     void reset();
 
@@ -38,9 +46,22 @@ public:
             for (size_t i = 0; i < outputBlock.getNumSamples(); ++i)
             {
                 const float x = in[i] * drive;
-                out[i] = (useADAA && channel < adaaShapers.size())
-                           ? adaaShapers[channel].processSample (x)
-                           : shape (x);
+                const float shaped = modelMatchGain
+                                       * ((useADAA && channel < oddShapers.size())
+                                            ? juce::jmap (harmonicRatio,
+                                                          oddShapers[channel].processSample (x),
+                                                          evenShapers[channel].processSample (x))
+                                            : shape (x));
+
+                // The asymmetric branch carries a level-dependent DC offset, which
+                // a one-pole high pass removes the way a coupling capacitor would.
+                // A one-pole stays stable at any rate: a biquad at 20 Hz against an
+                // 8x rate of 384 kHz puts a pole outside the unit circle once its
+                // coefficients are stored as float, which lets the stage diverge.
+                const float dc = shaped - dcPrevInput[channel] + dcCoeff * dcPrevOutput[channel];
+                dcPrevInput[channel] = shaped;
+                dcPrevOutput[channel] = dc;
+                out[i] = dc;
             }
         }
 
@@ -52,8 +73,16 @@ private:
 
     float drive = 1.0f;
     float harmonicRatio = 0.5f;
+    float modelMatchGain = 1.0f;
     bool useADAA = false;
-    std::vector<ADAATanhShaper> adaaShapers;
+    // ADAA is linear in the shaped function, so blending the two anti-aliased
+    // branches keeps the harmonic-balance control intact with ADAA engaged.
+    std::vector<ADAATanhShaper> oddShapers;
+    std::vector<ADAAAsymTanhShaper> evenShapers;
+
+    float dcCoeff = 0.0f;
+    std::vector<float> dcPrevInput;
+    std::vector<float> dcPrevOutput;
 
     juce::dsp::ProcessorDuplicator<juce::dsp::IIR::Filter<float>,
                                    juce::dsp::IIR::Coefficients<float>> tiltFilter;

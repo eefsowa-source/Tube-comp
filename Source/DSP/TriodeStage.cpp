@@ -3,28 +3,24 @@
 namespace
 {
     // Newton-Raphson solve of f(Vpk) = Vpk + Rp*Ip(Vgk,Vpk) - openCircuitV = 0
-    // for the WDF plate-circuit root. Central-difference derivative keeps this
-    // robust without hand-deriving the (fairly gnarly) analytic Koren partials.
+    // for the WDF plate-circuit root. The derivative comes from the closed-form
+    // Koren expression, so each iteration costs one transcendental evaluation
+    // instead of the three a central difference would need.
     double solvePlateVoltage (double Vgk, double openCircuitV, double Rp,
                                const KorenTriodeParams& params, double warmStart) noexcept
     {
         double Vpk = juce::jlimit (0.5, 500.0, warmStart);
 
-        constexpr double h = 1.0e-3;
         constexpr int maxIters = 12;
         constexpr double tol = 1.0e-6;
 
         for (int iter = 0; iter < maxIters; ++iter)
         {
-            const double ip = korenPlateCurrent (Vgk, Vpk, params);
-            const double f = Vpk + Rp * ip - openCircuitV;
+            const auto koren = korenPlateCurrentAndSlope (Vgk, Vpk, params);
+            const double f = Vpk + Rp * koren.ip - openCircuitV;
+            const double fPrime = 1.0 + Rp * koren.dIpdVpk;
 
-            const double ipPlus  = korenPlateCurrent (Vgk, Vpk + h, params);
-            const double ipMinus = korenPlateCurrent (Vgk, Vpk - h, params);
-            const double dIpdVpk = (ipPlus - ipMinus) / (2.0 * h);
-            const double fPrime = 1.0 + Rp * dIpdVpk;
-
-            if (std::abs (fPrime) < 1.0e-9)
+            if (! (std::abs (fPrime) > 1.0e-12))
                 break;
 
             const double step = f / fPrime;
@@ -45,27 +41,47 @@ void TriodeStage::prepare (const juce::dsp::ProcessSpec& spec)
 
     gridHighpassCoeff   = std::exp (-1.0 / (Rg * Cin * sampleRate));
     outputHighpassCoeff = std::exp (-1.0 / (Rload * Cout * sampleRate));
-    cathodeLowpassCoeff = std::exp (-1.0 / (Rk * Ck * sampleRate));
+
+    // Resolve Rk from the current harmonic/bias trims before seeding the DC
+    // operating point, so the quiescent state matches the bias actually used and
+    // the stage does not drift to it over the cathode time constant.
+    updateCathodeResistance();
 
     channels.assign (spec.numChannels, ChannelState {});
 
-    // Seed a sane DC operating point (Vg = 0, grid referenced through Rg to
-    // ground) via a few fixed-point iterations, so the Newton solve starts
-    // warm instead of from an arbitrary guess.
+    // Solve the DC operating point (grid at 0 V through Rg to ground).
+    //
+    // The naive fixed-point iteration Vk <- Ip(-Vk, Vpk(Vk)) * Rk has a loop
+    // gain of roughly gm*Rk, which is about 3 for these values, so it oscillates
+    // instead of settling and leaves the seed well off the true operating point.
+    // Damping it converges. An exactly converged operating point means the stage
+    // starts at rest on its own, with no warm-up pass over silence.
     double Vk = 2.0;
     double Vpk = 150.0;
-    for (int i = 0; i < 50; ++i)
+    constexpr double relaxation = 0.25;
+    for (int i = 0; i < 1000; ++i)
     {
         const double Vgk = 0.0 - Vk;
         Vpk = solvePlateVoltage (Vgk, Vb - Vk, Rp, triodeParams, Vpk);
-        const double ip = korenPlateCurrent (Vgk, Vpk, triodeParams);
-        Vk = ip * Rk;
+        const double targetVk = korenPlateCurrent (Vgk, Vpk, triodeParams) * Rk;
+        const double nextVk = Vk + relaxation * (targetVk - Vk);
+        const double change = std::abs (nextVk - Vk);
+        Vk = nextVk;
+
+        if (change < 1.0e-12)
+            break;
     }
+
+    quiescentVk = Vk;
+    quiescentVpk = Vpk;
 
     for (auto& ch : channels)
     {
-        ch.cathodeV = Vk;
-        ch.plateVpk = Vpk;
+        ch.cathodeV = quiescentVk;
+        ch.plateVpk = quiescentVpk;
+        // The output coupling capacitor starts charged to the DC plate-to-ground
+        // voltage. Without this the first sample passes that whole DC voltage.
+        ch.outPrevIn = quiescentVpk + quiescentVk;
     }
 
     tiltFilter.prepare (spec);
@@ -77,7 +93,10 @@ void TriodeStage::reset()
     for (auto& ch : channels)
     {
         ch.gridPrevIn = ch.gridPrevOut = 0.0;
-        ch.outPrevIn = ch.outPrevOut = 0.0;
+        ch.cathodeV = quiescentVk;
+        ch.plateVpk = quiescentVpk;
+        ch.outPrevIn = quiescentVpk + quiescentVk;
+        ch.outPrevOut = 0.0;
     }
     tiltFilter.reset();
 }

@@ -122,6 +122,11 @@ private:
     double driveVolts = 3.0;
     double outputTrim = 1.0 / 40.0; // brings plate-swing volts back near unity audio range
 
+    // DC operating point solved in prepare(). reset() restores it so a reset
+    // stage resumes from the same bias instead of keeping the last signal's sag.
+    double quiescentVk = 2.0;
+    double quiescentVpk = 150.0;
+
     std::vector<ChannelState> channels;
 
     juce::dsp::ProcessorDuplicator<juce::dsp::IIR::Filter<float>,

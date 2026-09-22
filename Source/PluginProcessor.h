@@ -5,6 +5,7 @@
 #include "DSP/TubeSaturator.h"
 #include "DSP/TriodeStage.h"
 #include "DSP/Compressor.h"
+#include "DSP/DryDelayLine.h"
 
 namespace ParamIDs
 {
@@ -26,6 +27,9 @@ namespace ParamIDs
     static const juce::String lookAhead   { "lookAhead" };
     static const juce::String sidechainHPF { "sidechainHPF" };
     static const juce::String biasDrive   { "biasDrive" };
+    static const juce::String topology    { "topology" }; // 0=feedforward, 1=feedback vari-mu
+    static const juce::String timeConstant { "timeConstant" }; // 0=custom, 1..6=Fairchild timing
+    static const juce::String linkMode    { "linkMode" }; // 0=L/R, 1=linked, 2=Lat/Ver
 }
 
 class TubeCompAudioProcessor : public juce::AudioProcessor
@@ -72,12 +76,23 @@ private:
     void updateOversamplingIfNeeded (int newFactorChoice);
 
     Compressor compressor;
-    TubeSaturator saturator;
-    TriodeStage triodeStage;
+    // One saturator/triode pair per oversampling factor, each prepared at that
+    // factor's effective sample rate. Switching quality at runtime then only
+    // swaps the active pair -- no allocations, no stale filter coefficients.
+    std::array<TubeSaturator, 4> saturators;
+    std::array<TriodeStage, 4> triodeStages;
     std::array<std::unique_ptr<juce::dsp::Oversampling<float>>, 4> oversamplingStages;
     juce::dsp::Oversampling<float>* oversampling = nullptr;
     int currentOversamplingChoice = -1;
+    // Index of the stage the tone parameters were last pushed into; a change of
+    // quality step forces a full re-apply so the newly active stage is current.
+    int lastAppliedFactor = -1;
+    // Unprocessed reference, delayed to match the wet path (compressor
+    // look-ahead + oversampling latency). Used for the Mix blend and for bypass,
+    // so both stay time-aligned with the processed signal.
+    DryDelayLine dryDelay;
     juce::AudioBuffer<float> dryBuffer;
+    int lastReportedLatency = -1;
 
     juce::LinearSmoothedValue<float> inputGainSmoothed, outputGainSmoothed, mixSmoothed;
     float lastBrightness = -1.0f, lastHarmonics = -1.0f, lastDrive = -1.0f, lastBiasDrive = -1.0f;
