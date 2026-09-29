@@ -5,3 +5,4 @@ build/
 *_artefacts/
 JuceLibraryCode/
 *.pid
+Packaging/dist/

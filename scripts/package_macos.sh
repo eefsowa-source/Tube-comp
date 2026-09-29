@@ -77,8 +77,31 @@ if [[ "${SKIP_BUILD}" -eq 0 ]]; then
     cmake --build "${BUILD_DIR}" --target eonchild_AU eonchild_VST3
 fi
 
-AU_SOURCE="${BUILD_DIR}/eonchild_artefacts/AU/${PRODUCT_NAME}.component"
-VST3_SOURCE="${BUILD_DIR}/eonchild_artefacts/VST3/${PRODUCT_NAME}.vst3"
+# CMake's ARCHIVE_OUTPUT_DIRECTORY puts bundles under a per-config folder. A
+# single-config generator lands them in Release, so look there first and fall
+# back to the flat path that multi-config generators and older builds use.
+find_bundle() {
+    local relative="$1" name="$2" candidate
+    for candidate in "${BUILD_DIR}/eonchild_artefacts/Release/${relative}" \
+                     "${BUILD_DIR}/eonchild_artefacts/${relative}" \
+                     "${BUILD_DIR}/${relative}"; do
+        if [[ -d "${candidate}/${name}" ]]; then
+            printf '%s\n' "${candidate}/${name}"
+            return 0
+        fi
+    done
+    return 1
+}
+
+AU_SOURCE="$(find_bundle "AU" "${PRODUCT_NAME}.component")" || {
+    echo "Could not locate ${PRODUCT_NAME}.component under ${BUILD_DIR}/eonchild_artefacts." >&2
+    echo "Build first, or pass --build-dir with the directory CMake populated." >&2
+    exit 1
+}
+VST3_SOURCE="$(find_bundle "VST3" "${PRODUCT_NAME}.vst3")" || {
+    echo "Could not locate ${PRODUCT_NAME}.vst3 under ${BUILD_DIR}/eonchild_artefacts." >&2
+    exit 1
+}
 
 for bundle in "${AU_SOURCE}" "${VST3_SOURCE}"; do
     [[ -d "${bundle}" ]] || { echo "Missing plugin bundle: ${bundle}" >&2; exit 1; }
