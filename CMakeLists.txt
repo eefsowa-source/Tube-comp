@@ -7,6 +7,16 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 add_subdirectory(/Users/sungha/JUCE JUCE)
 
+include(FetchContent)
+FetchContent_Declare(melatonin_inspector
+    GIT_REPOSITORY https://github.com/sudara/melatonin_inspector.git
+    GIT_TAG 9c483f865854d83fe9873e1c20e3fd772f695f80
+    # juce_add_module() derives the module name from the directory name, so
+    # the default "<name>-src" checkout would fail the module-header lookup.
+    SOURCE_DIR ${CMAKE_BINARY_DIR}/_deps/melatonin_inspector
+    GIT_SHALLOW FALSE)
+FetchContent_MakeAvailable(melatonin_inspector)
+
 juce_add_plugin(eonchild
     COMPANY_NAME "EON"
     PLUGIN_MANUFACTURER_CODE Eonn
@@ -46,6 +56,8 @@ target_link_libraries(eonchild
         juce::juce_recommended_config_flags
         juce::juce_recommended_lto_flags
         juce::juce_recommended_warning_flags)
+target_link_libraries(eonchild PUBLIC "$<$<CONFIG:Debug>:melatonin_inspector>")
+target_compile_definitions(eonchild PUBLIC "$<$<CONFIG:Debug>:MELATONIN_INSPECTOR_ENABLED=1>")
 
 # Offline DSP sanity check (no DAW/GUI needed) -- feeds a stress signal through
 # the WDF triode model and checks for NaN/Inf/divergence.
@@ -134,6 +146,18 @@ target_link_libraries(eonchild_NullRender PRIVATE
     eonchild
     juce::juce_audio_utils
     juce::juce_dsp
+    juce::juce_recommended_config_flags)
+
+# Offline editor snapshot tool: paints the real editor to a PNG so faceplate
+# review does not require a DAW session. Not registered as a CTest case --
+# it produces an artifact rather than a pass/fail verdict.
+add_executable(eonchild_EditorSnapshot
+    Tools/editor_snapshot.cpp)
+
+target_link_libraries(eonchild_EditorSnapshot PRIVATE
+    eonchild
+    juce::juce_audio_utils
+    juce::juce_gui_extra
     juce::juce_recommended_config_flags)
 
 enable_testing()

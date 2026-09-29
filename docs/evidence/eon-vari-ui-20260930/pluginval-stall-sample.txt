@@ -1,0 +1,38 @@
+pluginval stall diagnosis (2026-09-30, macOS 15.7.9 24G830, arm64)
+
+Command that stalled:
+  pluginval --strictness-level 10 --skip-gui-tests \
+    --vst3-folder "<repo>/build/eonchild_artefacts/Release/VST3"
+
+Observed: no output, no log file written, process alive but idle. Ran for
+over two minutes before termination in three separate attempts. The same
+stall reproduced with and without --skip-gui-tests, with and without
+--validate-in-process, and when writing to --output-dir.
+
+Cause: this execution environment has no Aqua session. `stat -f %Su
+/dev/console` reports root, so pluginval reaches its AppKit entry point and
+blocks in the event loop before it loads the plugin bundle. WindowServer is
+running, so the process is not waiting for a display to appear; it is waiting
+for a window server session it was never granted.
+
+Call graph at the stall (1394 of 1394 samples on the main thread):
+
+  start (in dyld)
+    juce::JUCEApplicationBase::main(int, char const**)
+      -[NSApplication run]
+        -[NSApplication(NSEventRouting) _nextEventMatchingEventMask:...]
+          _BlockUntilNextEventMatchingListInModeWithFilter
+            ReceiveNextEventCommon
+              RunCurrentEventLoopInMode
+                CFRunLoopRunSpecific
+                  __CFRunLoopRun
+                    __CFRunLoopServiceMachPort
+                      mach_msg2_trap
+
+The plugin never appears in the stack, which is what rules out a plugin-side
+hang (open, parameter scan, or a GUI test that blocks).
+
+Conclusion: not a code defect. pluginval needs a logged-in GUI session; rerun
+from one. auval passes headlessly because it does not use AppKit, which is why
+the AU format gate completed and this one could not.
+

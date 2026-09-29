@@ -56,8 +56,23 @@ inline KorenPlateResult korenPlateCurrentAndSlope (double Vgk, double Vpk,
     const double s = 1.0 / p.mu + Vgk / sqrtKvbTerm;
     const double e1Arg = p.kp * s;
 
-    // log(1 + exp(x)) computed in a way that stays finite for large x.
-    const double softplus = (e1Arg > 30.0) ? e1Arg : std::log1p (std::exp (e1Arg));
+    // log(1 + exp(x)) and logistic(x) share the same exp(x). Computing it once
+    // drops a transcendental from every model evaluation, which is the hot path
+    // under oversampling. The large-x branch keeps exp() away from overflow and
+    // reproduces the previous asymptotes exactly (softplus -> x, logistic -> 1).
+    double softplus = 0.0;
+    double logistic = 0.0;
+    if (e1Arg > 30.0)
+    {
+        softplus = e1Arg;
+        logistic = 1.0;
+    }
+    else
+    {
+        const double exponential = std::exp (e1Arg);
+        softplus = std::log1p (exponential);
+        logistic = exponential / (1.0 + exponential);
+    }
 
     const double e1 = (Vpk / p.kp) * softplus;
 
@@ -65,15 +80,14 @@ inline KorenPlateResult korenPlateCurrentAndSlope (double Vgk, double Vpk,
     if (e1 <= 0.0)
         return result;
 
-    const double e1Pow = std::pow (e1, p.ex);
+    // e1^ex and e1^(ex-1) share one pow: e1^ex = e1 * e1^(ex-1).
+    const double e1PowM1 = std::pow (e1, p.ex - 1.0);
+    const double e1Pow = e1 * e1PowM1;
     result.ip = e1Pow / p.kg1;
 
-    // logistic(z) saturates to 0 or 1 without overflow, so the slope stays
-    // finite in the deep-cutoff and deep-conduction regions alike.
-    const double logistic = 1.0 / (1.0 + std::exp (-e1Arg));
     const double dsDVpk = -Vgk * Vpk / (kvbTerm * sqrtKvbTerm);
     const double dE1dVpk = softplus / p.kp + Vpk * logistic * dsDVpk;
-    result.dIpdVpk = (p.ex / p.kg1) * (e1Pow / e1) * dE1dVpk;
+    result.dIpdVpk = (p.ex / p.kg1) * e1PowM1 * dE1dVpk;
 
     return result;
 }

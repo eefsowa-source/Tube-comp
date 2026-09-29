@@ -47,6 +47,11 @@ void Compressor::reset()
 {
     currentGainDb.fill (0.0f);
     currentGainDbAtomic.store (0.0f, std::memory_order_relaxed);
+    for (auto& gain : channelGainDbAtomic)
+        gain.store (0.0f, std::memory_order_relaxed);
+    blockGainDb.fill (0.0f);
+    for (auto& gain : blockGainDbAtomic)
+        gain.store (0.0f, std::memory_order_relaxed);
     automaticReleaseState = 0.0f;
     meterEnvelopeLinear.fill (0.0f);
     for (auto& v : meterLevelDb)
@@ -170,6 +175,8 @@ void Compressor::process (juce::AudioBuffer<float>& buffer) noexcept
     const int numSamples = buffer.getNumSamples();
     const int numChannels = juce::jmin (buffer.getNumChannels(), channelCount);
 
+    blockGainDb.fill (0.0f);
+
     for (int i = 0; i < numSamples; ++i)
     {
         std::array<float, 2> inputSamples { 0.0f, 0.0f };
@@ -271,9 +278,8 @@ void Compressor::process (juce::AudioBuffer<float>& buffer) noexcept
             const float coeff = (targetGainDb[path] > currentGainDb[path]) ? attackCoeff : releaseCoeffForSample;
             currentGainDb[path] = targetGainDb[path] + coeff * (currentGainDb[path] - targetGainDb[path]);
         }
-        currentGainDbAtomic.store (juce::jmax (currentGainDb[0], currentGainDb[1]),
-                                   std::memory_order_relaxed);
-
+        for (size_t path = 0; path < blockGainDb.size(); ++path)
+            blockGainDb[path] = juce::jmax (blockGainDb[path], currentGainDb[path]);
         if (effectiveLinkMode == 2)
         {
             const auto delayedControl = toControlDomain (delayedSamples[0], delayedSamples[1], effectiveLinkMode);
@@ -297,6 +303,15 @@ void Compressor::process (juce::AudioBuffer<float>& buffer) noexcept
             }
         }
     }
+
+    // Publish once per block instead of once per sample: the message thread
+    // polls at UI rate, and this avoids needless atomic traffic on audio.
+    for (size_t path = 0; path < currentGainDb.size(); ++path)
+        channelGainDbAtomic[path].store (currentGainDb[path], std::memory_order_relaxed);
+    for (size_t path = 0; path < blockGainDb.size(); ++path)
+        blockGainDbAtomic[path].store (blockGainDb[path], std::memory_order_relaxed);
+    currentGainDbAtomic.store (juce::jmax (currentGainDb[0], currentGainDb[1]),
+                               std::memory_order_relaxed);
 
     // VU-style output metering, per channel, instant attack / slow release.
     for (int ch = 0; ch < juce::jmin (numChannels, 2); ++ch)

@@ -6,6 +6,11 @@
 
 namespace
 {
+/** Vari-mu coupling depth: volts of grid-bias shift per dB of gain reduction.
+    With TriodeStage's 1.8 V ceiling this reaches full depth near 12 dB GR, where
+    the tube's second harmonic is strongest and the compressor is working hard. */
+constexpr double grCouplingVoltsPerDb = 0.15;
+
 struct FactoryPreset
 {
     const char* name;
@@ -191,6 +196,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout TubeCompAudioProcessor::crea
         ParamIDs::linkMode, "Link",
         juce::StringArray { "Left/Right", "Linked", "Lat/Ver" }, 1));
 
+    params.push_back (std::make_unique<juce::AudioParameterChoice> (
+        ParamIDs::transformer, "Transformer",
+        juce::StringArray { "Off", "On" }, 0));
+
     return { params.begin(), params.end() };
 }
 
@@ -206,6 +215,43 @@ void TubeCompAudioProcessor::updateOversamplingIfNeeded (int newFactorChoice)
     oversampling = oversamplingStages[static_cast<size_t> (newFactorChoice)].get();
 }
 
+float TubeCompAudioProcessor::getInputLevelDb (int channel) const noexcept
+{
+    return (channel >= 0 && channel < 2)
+        ? inputMeterLevelDb[static_cast<size_t> (channel)].load (std::memory_order_relaxed)
+        : -100.0f;
+}
+
+float TubeCompAudioProcessor::getOutputLevelDb (int channel) const noexcept
+{
+    return (channel >= 0 && channel < 2)
+        ? outputMeterLevelDb[static_cast<size_t> (channel)].load (std::memory_order_relaxed)
+        : -100.0f;
+}
+
+void TubeCompAudioProcessor::updateMeterTap (const juce::AudioBuffer<float>& buffer,
+                                              std::array<float, 2>& envelope,
+                                              std::array<std::atomic<float>, 2>& publishedLevels) noexcept
+{
+    const int samples = buffer.getNumSamples();
+    if (samples <= 0)
+        return;
+
+    // Peak detector with a 300 ms fall time. Measuring one block peak is cheap
+    // and preserves transients that a 30 Hz UI poll could otherwise miss.
+    const float release = static_cast<float> (std::exp (-static_cast<double> (samples)
+                                                         / (meterSampleRate * 0.3)));
+    const int channels = juce::jmin (buffer.getNumChannels(), 2);
+    for (int ch = 0; ch < channels; ++ch)
+    {
+        const auto index = static_cast<size_t> (ch);
+        const float peak = buffer.getMagnitude (ch, 0, samples);
+        envelope[index] = juce::jmax (peak, envelope[index] * release);
+        publishedLevels[index].store (juce::Decibels::gainToDecibels (envelope[index], -100.0f),
+                                      std::memory_order_relaxed);
+    }
+}
+
 void TubeCompAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
     const auto safeSamplesPerBlock = static_cast<juce::uint32> (juce::jmax (1, samplesPerBlock));
@@ -215,6 +261,13 @@ void TubeCompAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlo
                                    static_cast<juce::uint32> (numChannels) };
 
     dryBuffer.setSize (numChannels, static_cast<int> (safeSamplesPerBlock), false, false, true);
+    meterSampleRate = sampleRate;
+    inputMeterEnvelope.fill (0.0f);
+    outputMeterEnvelope.fill (0.0f);
+    for (auto& level : inputMeterLevelDb)
+        level.store (-100.0f, std::memory_order_relaxed);
+    for (auto& level : outputMeterLevelDb)
+        level.store (-100.0f, std::memory_order_relaxed);
 
     // Build the oversamplers first: the dry reference has to be long enough to
     // cover the largest look-ahead plus whichever oversampler reports the most
@@ -241,6 +294,7 @@ void TubeCompAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlo
         oversampledSpec.sampleRate = sampleRate * static_cast<double> (1 << choice);
         saturators[static_cast<size_t> (choice)].prepare (oversampledSpec);
         triodeStages[static_cast<size_t> (choice)].prepare (oversampledSpec);
+        transformerStages[static_cast<size_t> (choice)].prepare (oversampledSpec);
     }
 
     oversampling = nullptr;
@@ -298,6 +352,11 @@ void TubeCompAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
     const int numChannels = buffer.getNumChannels();
     const int numSamples = buffer.getNumSamples();
 
+    // The input tap lives before input gain, detection, latency alignment, or
+    // bypass so its 0 VU calibration always describes the signal arriving at
+    // the plug-in rather than a processing-dependent level.
+    updateMeterTap (buffer, inputMeterEnvelope, inputMeterLevelDb);
+
     inputGainSmoothed.setTargetValue (juce::Decibels::decibelsToGain (
         apvts.getRawParameterValue (ParamIDs::inputGain)->load()));
     outputGainSmoothed.setTargetValue (juce::Decibels::decibelsToGain (
@@ -331,12 +390,20 @@ void TubeCompAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
     saturators[activeFactor].setUseADAA (useADAA);
 
     const bool useTriode = static_cast<int> (apvts.getRawParameterValue (ParamIDs::circuitModel)->load()) == 1;
+    const bool useTransformer = apvts.getRawParameterValue (ParamIDs::transformer)->load() > 0.5f;
 
     compressor.setThresholdDb (apvts.getRawParameterValue (ParamIDs::threshold)->load());
     compressor.setRatio (apvts.getRawParameterValue (ParamIDs::ratio)->load());
-    compressor.setAttackMs (apvts.getRawParameterValue (ParamIDs::attack)->load());
-    compressor.setReleaseMs (apvts.getRawParameterValue (ParamIDs::release)->load());
-    compressor.setTimeConstant (static_cast<int> (apvts.getRawParameterValue (ParamIDs::timeConstant)->load()));
+    const int tcChoice = static_cast<int> (apvts.getRawParameterValue (ParamIDs::timeConstant)->load());
+    compressor.setTimeConstant (tcChoice);
+    // A Time Constant preset owns attack/release; the manual knobs only apply
+    // in Custom mode. Applying them every block would overwrite the TC values
+    // setTimeConstant() just installed.
+    if (tcChoice == 0)
+    {
+        compressor.setAttackMs (apvts.getRawParameterValue (ParamIDs::attack)->load());
+        compressor.setReleaseMs (apvts.getRawParameterValue (ParamIDs::release)->load());
+    }
     compressor.setLinkMode (static_cast<int> (apvts.getRawParameterValue (ParamIDs::linkMode)->load()));
     compressor.setKneeDb (apvts.getRawParameterValue (ParamIDs::knee)->load());
     compressor.setLookAheadMs (apvts.getRawParameterValue (ParamIDs::lookAhead)->load());
@@ -366,6 +433,7 @@ void TubeCompAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
     {
         for (int ch = 0; ch < numChannels; ++ch)
             buffer.copyFrom (ch, 0, dryBuffer, ch, 0, numSamples);
+        updateMeterTap (buffer, outputMeterEnvelope, outputMeterLevelDb);
         return;
     }
 
@@ -386,9 +454,28 @@ void TubeCompAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
     juce::dsp::ProcessContextReplacing<float> context (oversampledBlock);
 
     if (useTriode)
+    {
+        // Vari-mu coupling: the compressor's gain reduction (block peak, so a
+        // transient is not missed) drives the tube's grid colder, so the harmonic
+        // character grows with GR instead of staying fixed. Only the triode path
+        // has an operating point to move; the Fast waveshaper has no bias.
+        const float blockGrDb = juce::jmax (compressor.getBlockGainReductionDb (0),
+                                            compressor.getBlockGainReductionDb (1));
+        triodeStages[activeFactor].setControlBiasVolts (-grCouplingVoltsPerDb
+                                                        * static_cast<double> (blockGrDb));
         triodeStages[activeFactor].process (context);
+    }
     else
+    {
         saturators[activeFactor].process (context);
+    }
+
+    // Output transformer, still inside the oversampled domain so the iron's
+    // nonlinearity is filtered by the same decimation path. Sits after the tone
+    // stage because the real chain has the output iron last: its low-end bloom
+    // and HF rolloff act on whatever harmonics the tube just produced.
+    if (useTransformer)
+        transformerStages[activeFactor].process (context);
 
     oversampling->processSamplesDown (block);
 
@@ -404,6 +491,10 @@ void TubeCompAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
             buffer.setSample (ch, i, juce::jmap (mix, dry, wet));
         }
     }
+
+    // Out mode represents the actual plug-in result, including output gain,
+    // saturation and dry/wet blend, not the compressor's internal buffer.
+    updateMeterTap (buffer, outputMeterEnvelope, outputMeterLevelDb);
 }
 
 juce::AudioProcessorEditor* TubeCompAudioProcessor::createEditor()

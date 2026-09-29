@@ -1,0 +1,138 @@
+--- tone probe 1000 Hz at -12.0 dBFS (THD includes harmonics 2..8) ---
+config           THD[%]  H2[dBc]  H3[dBc]    rms[dB]  crest[dB]
+fast-1x           8.426    -24.0    -25.1       1.27       3.02
+fast-1x-adaa      8.382    -24.1    -25.2       1.25       3.02
+wdf-1x           12.087    -18.5    -32.8       1.69       3.75
+fast-2x           8.426    -24.0    -25.1       1.26       3.02
+fast-2x-adaa      8.415    -24.0    -25.1       1.26       3.02
+wdf-2x           12.081    -18.5    -32.8       1.68       3.75
+fast-4x           8.426    -24.0    -25.1       1.26       3.02
+fast-4x-adaa      8.426    -24.0    -25.1       1.26       3.01
+wdf-4x           12.077    -18.5    -32.8       1.68       3.74
+fast-8x           8.426    -24.0    -25.1       1.26       3.01
+fast-8x-adaa      8.426    -24.0    -25.1       1.26       3.02
+wdf-8x           12.076    -18.5    -32.8       1.68       3.75
+
+--- tone probe 1000 Hz at 0.0 dBFS (THD includes harmonics 2..8) ---
+config           THD[%]  H2[dBc]  H3[dBc]    rms[dB]  crest[dB]
+fast-1x          29.451    -26.5    -11.6       5.69       1.17
+fast-1x-adaa     29.196    -26.5    -11.6       5.68       1.19
+wdf-1x           35.192    -11.4    -15.6       8.39       2.70
+fast-2x          29.451    -26.5    -11.6       5.68       1.17
+fast-2x-adaa     29.387    -26.5    -11.6       5.68       1.18
+wdf-2x           35.189    -11.4    -15.6       8.38       2.70
+fast-4x          29.451    -26.5    -11.6       5.68       1.18
+fast-4x-adaa     29.435    -26.5    -11.6       5.68       1.18
+wdf-4x           35.188    -11.4    -15.6       8.38       2.70
+fast-8x          29.451    -26.5    -11.6       5.68       1.18
+fast-8x-adaa     29.447    -26.5    -11.6       5.68       1.18
+wdf-8x           35.187    -11.4    -15.6       8.38       2.70
+
+--- tone probe 6000 Hz at -12.0 dBFS (THD includes harmonics 2..8) ---
+config           THD[%]  H2[dBc]  H3[dBc]    rms[dB]  crest[dB]
+fast-1x         100.680    -24.0    -25.7       1.27       3.02
+fast-1x-adaa    100.482    -25.0    -27.7       0.70       2.53
+wdf-1x          101.442    -18.5    -33.0       1.69       3.75
+fast-2x         100.706    -24.0    -25.1       1.26       3.26
+fast-2x-adaa    100.641    -24.3    -25.8       1.13       2.94
+wdf-2x          101.449    -18.5    -32.8       1.68       3.68
+fast-4x         100.703    -24.0    -25.1       1.26       2.86
+fast-4x-adaa    100.685    -24.1    -25.3       1.23       2.68
+wdf-4x          101.448    -18.5    -32.8       1.68       2.99
+fast-8x         100.705    -24.0    -25.1       1.26       3.27
+fast-8x-adaa    100.701    -24.0    -25.2       1.25       3.29
+wdf-8x          101.448    -18.5    -32.8       1.68       3.82
+
+--- alias probe 7001 Hz at -12.0 dBFS (non-harmonic bins, dBc) ---
+config           alias[dBc]
+fast-1x               -38.1
+fast-1x-adaa          -39.9
+wdf-1x                -40.2
+fast-2x               -40.3
+fast-2x-adaa          -40.3
+wdf-2x                -40.2
+fast-4x               -40.3
+fast-4x-adaa          -40.3
+wdf-4x                -40.2
+fast-8x               -40.3
+fast-8x-adaa          -40.3
+wdf-8x                -40.2
+
+--- alias probe 7001 Hz at -3.0 dBFS (non-harmonic bins, dBc) ---
+config           alias[dBc]
+fast-1x               -22.4
+fast-1x-adaa          -32.4
+wdf-1x                -20.7
+fast-2x               -40.1
+fast-2x-adaa          -40.3
+wdf-2x                -39.9
+fast-4x               -40.3
+fast-4x-adaa          -40.3
+wdf-4x                -40.0
+fast-8x               -40.3
+fast-8x-adaa          -40.3
+wdf-8x                -40.0
+
+--- processing cost (percent of real time, 48 kHz, 512 sample blocks) ---
+fast-1x          0.35%
+fast-1x-adaa     0.48%
+wdf-1x           1.33%
+fast-2x          0.65%
+fast-2x-adaa     0.93%
+wdf-2x           3.61%
+fast-4x          1.13%
+fast-4x-adaa     1.64%
+wdf-4x           6.25%
+fast-8x          2.05%
+fast-8x-adaa     3.08%
+wdf-8x          11.98%
+
+--- model level match (1 kHz, 4x, harmonics 0.5, brightness 0.5, bias 0.5) ---
+ drive[dB]   in[dBFS]   fast[dB]    wdf[dB]   wdf-fast
+       0.0      -24.0     -21.30     -21.61      -0.31
+       0.0      -18.0     -15.32     -15.61      -0.30
+       0.0      -12.0      -9.39      -9.65      -0.25
+       0.0       -6.0      -3.69      -3.78      -0.08
+       0.0        0.0       1.26       1.68       0.42
+       6.0      -24.0     -15.32     -15.61      -0.30
+       6.0      -18.0      -9.39      -9.65      -0.25
+       6.0      -12.0      -3.69      -3.78      -0.08
+       6.0       -6.0       1.26       1.68       0.42
+       6.0        0.0       4.43       6.04       1.61
+      12.0      -24.0      -9.39      -9.65      -0.25
+      12.0      -18.0      -3.69      -3.78      -0.08
+      12.0      -12.0       1.26       1.68       0.42
+      12.0       -6.0       4.43       6.04       1.61
+      12.0        0.0       5.68       8.38       2.70
+      18.0      -24.0      -3.69      -3.78      -0.08
+      18.0      -18.0       1.26       1.68       0.42
+      18.0      -12.0       4.43       6.04       1.61
+      18.0       -6.0       5.68       8.38       2.70
+      18.0        0.0       6.13       9.17       3.04
+mean difference 0.65 dB over 20 points
+
+--- compressor static curve (threshold -18 dB, ratio 4, knee 6, 1 kHz) ---
+  in[dBFS]  FF GR[dB]   FF out[dB]  FB GR[dB]   FB out[dB]
+     -36.0       0.00       -33.60       0.00       -33.60
+     -30.0       0.00       -27.60       0.00       -27.60
+     -24.0       0.00       -21.61       0.00       -21.61
+     -18.0       0.39       -15.99       0.31       -15.91
+     -12.0       3.69       -13.12       2.22       -11.74
+      -6.0       7.92       -11.14       4.64        -8.06
+      -3.0      10.10       -10.32       5.87        -6.28
+       0.0      12.30        -9.69       7.12        -4.55
+
+--- S3 transformer delta (On minus Off, wdf-4x, drive 12) ---
+   band    rms[off/on/delta]  H3[off/on/delta] alias[off/on/delta]
+   40Hz      1.36/  1.79/ +0.43  -33.1/ -30.0/  +3.0  -40.8/ -40.8/  -0.0
+   1kHz      1.68/  1.31/ -0.37  -32.8/ -29.6/  +3.2  -40.4/ -40.4/  -0.0
+   15kHz     1.62/  1.14/ -0.48 -118.3/-124.5/  -6.2 -106.4/ -82.5/ +23.9
+
+--- S3 transformer cost (percent of real time) ---
+   quality         off       on    delta
+   1x             1.35     1.54     0.20
+   2x             3.55     3.77     0.22
+   4x             6.42     6.84     0.42
+   8x            12.31    12.98     0.68
+
+baseline run wall time: 21.9 s

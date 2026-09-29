@@ -55,6 +55,21 @@ public:
 
     /** Gain reduction applied to the last processed sample, in dB (>= 0). Useful for a meter. */
     float getCurrentGainReductionDb() const noexcept { return currentGainDbAtomic.load (std::memory_order_relaxed); }
+    float getChannelGainReductionDb (int channel) const noexcept
+    {
+        return (channel >= 0 && channel < 2) ? channelGainDbAtomic[static_cast<size_t> (channel)].load (std::memory_order_relaxed)
+                                              : 0.0f;
+    }
+
+    /** Peak gain reduction over the most recently processed block, in dB (>= 0),
+        for channel 0 (L) / 1 (R). The vari-mu coupling reads this once per block
+        to shift the tube operating point; the end-of-block value alone would miss
+        transients that only clip the first samples of the block. */
+    float getBlockGainReductionDb (int channel) const noexcept
+    {
+        return (channel >= 0 && channel < 2) ? blockGainDbAtomic[static_cast<size_t> (channel)].load (std::memory_order_relaxed)
+                                              : 0.0f;
+    }
 
     /** Post-gain output level for channel 0 (L) / 1 (R), VU-ballistics smoothed, in dBFS.
         Safe to call from the message/UI thread while the audio thread updates it. */
@@ -79,6 +94,9 @@ private:
 
     std::array<float, 2> currentGainDb { 0.0f, 0.0f }; // per detector path, dB
     std::atomic<float> currentGainDbAtomic { 0.0f };
+    std::array<std::atomic<float>, 2> channelGainDbAtomic { { 0.0f, 0.0f } };
+    std::array<float, 2> blockGainDb { 0.0f, 0.0f };
+    std::array<std::atomic<float>, 2> blockGainDbAtomic { { 0.0f, 0.0f } };
 
     int timeConstantChoice = 0; // 0 = custom, 1..6 = Fairchild-style
     int linkMode = 1;            // 0 = L/R, 1 = linked, 2 = Lateral/Vertical

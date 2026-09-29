@@ -64,6 +64,33 @@ public:
         This modulates the DC quiescent current independently of drive, affecting saturation onset. */
     void setBiasDrive (float bias01) noexcept;
 
+    /** Vari-mu control voltage: a DC grid-cathode offset in volts (<= 0) injected
+        inside the tube equation, past the input coupling high-pass, so it moves
+        the operating point instead of being blocked by Cin. Heavier gain
+        reduction drives the grid colder, which raises the harmonic content
+        exactly when the compressor is working. A small-signal gain trim
+        (see getControlBiasGainComp) keeps the static level law with the
+        compressor rather than double-counting the reduction. */
+    void setControlBiasVolts (double volts) noexcept;
+
+    /** Current requested control bias, in volts. */
+    double getControlBiasVolts() const noexcept { return controlBiasTargetVolts; }
+
+    /** Linear gain applied to undo the small-signal loss caused by the control
+        bias, so the coupling changes the harmonic character without changing the
+        steady-state level. */
+    double getControlBiasGainComp() const noexcept { return controlBiasGainComp; }
+
+    /** Deepest control-bias shift the coupling may request. */
+    static constexpr double maxControlBiasVolts = 1.8;
+
+    /** Smoothing time constant for the control bias, in seconds. This is a
+        compromise: fast enough to follow the compressor's GR envelope on musical
+        material, slow enough that the DC plate-voltage change stays gentle
+        relative to the output coupling network, so the operating-point shift
+        does not thump on a transient. */
+    static constexpr double controlBiasSmoothSeconds = 0.012;
+
     template <typename ProcessContext>
     void process (const ProcessContext& context) noexcept
     {
@@ -93,10 +120,14 @@ private:
         double outPrevIn = 0.0, outPrevOut = 0.0;     // Cout highpass state
         double cathodeV = 2.0;                        // tracked Vk (slow)
         double plateVpk = 100.0;                       // Newton-Raphson warm start
+        double plateVpkPrev = 100.0;                   // previous sample, for the linear predictor
+        double controlBias = 0.0;                      // smoothed vari-mu control voltage
+        double compGain = 1.0;                         // smoothed small-signal gain trim
     };
 
     float processSample (ChannelState& s, float xIn) noexcept;
     void updateCathodeResistance() noexcept;
+    void updateControlBiasCompensation() noexcept;
 
     // Circuit constants (typical 12AX7 preamp / hybrid-compressor gain stage).
     static constexpr double Vb  = 250.0;     // B+ supply, volts
@@ -118,6 +149,10 @@ private:
     double Rk = RkHot;
     float harmonicRatio = 0.5f;
     float biasDrive = 0.5f;
+
+    double controlBiasTargetVolts = 0.0;
+    double controlBiasSmoothCoeff = 0.0;
+    double controlBiasGainComp = 1.0;
 
     double driveVolts = 3.0;
     double outputTrim = 1.0 / 40.0; // brings plate-swing volts back near unity audio range

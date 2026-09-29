@@ -80,6 +80,7 @@ void configureNeutralChain (TubeCompAudioProcessor& processor)
     setParam (processor, ParamIDs::harmonics, 0.5f);
     setParam (processor, ParamIDs::brightness, 0.5f);
     setParam (processor, ParamIDs::biasDrive, 0.5f);
+    setParam (processor, ParamIDs::transformer, 0.0f);
 }
 
 TubeCompAudioProcessor& prepare (TubeCompAudioProcessor& processor, const Config& config)
@@ -277,11 +278,18 @@ void printAliasTable (double frequency, double levelDb, const std::vector<Config
     std::printf ("\n");
 }
 
+double measureCostPercent (TubeCompAudioProcessor& processor);
+
 double measureCostPercent (const Config& config)
 {
     TubeCompAudioProcessor processor;
     prepare (processor, config);
 
+    return measureCostPercent (processor);
+}
+
+double measureCostPercent (TubeCompAudioProcessor& processor)
+{
     const double audioSeconds = 10.0;
     const int totalSamples = static_cast<int> (sampleRate * audioSeconds);
 
@@ -393,6 +401,78 @@ void printCompressorCurve()
 }
 }
 
+/**
+   S3 transformer gate. The linear iron model is only worth keeping if it moves
+   the spectrum in a measurable, non-destructive direction, so this prints the
+   On-minus-Off delta at three probe bands plus the added harmonics, and the CPU
+   it costs at the quality settings that matter.
+*/
+static void printTransformerDelta()
+{
+    std::printf ("--- S3 transformer delta (On minus Off, wdf-4x, drive 12) ---\n");
+    std::printf ("   %-7s %17s %17s %17s\n",
+                 "band", "rms[off/on/delta]", "H3[off/on/delta]", "alias[off/on/delta]");
+
+    struct Band { double freq; const char* name; };
+    const Band bands[] = { { 40.0, "40Hz" }, { 1000.0, "1kHz" }, { 15000.0, "15kHz" } };
+
+    for (const auto& band : bands)
+    {
+        std::array<double, 2> rms {}, h3 {}, alias {};
+        for (int on = 0; on < 2; ++on)
+        {
+            TubeCompAudioProcessor processor;
+            processor.setPlayConfigDetails (2, 2, sampleRate, blockSize);
+            configureNeutralChain (processor);
+            setParam (processor, ParamIDs::oversample, 2.0f);
+            setParam (processor, ParamIDs::circuitModel, 1.0f);
+            setParam (processor, ParamIDs::drive, 12.0f);
+            setParam (processor, ParamIDs::transformer, static_cast<float> (on));
+            processor.prepareToPlay (sampleRate, blockSize);
+
+            const auto output = renderTone (processor, band.freq, juce::Decibels::decibelsToGain (-12.0));
+            rms[static_cast<size_t> (on)] = analyseTone (output, band.freq).rmsDb;
+            h3[static_cast<size_t> (on)] = analyseTone (output, band.freq).h3Db;
+            alias[static_cast<size_t> (on)] = measureAliasDbc (output, band.freq);
+        }
+
+        char rmsText[64], h3Text[64], aliasText[64];
+        std::snprintf (rmsText, sizeof rmsText, "%6.2f/%6.2f/%+6.2f", rms[0], rms[1], rms[1] - rms[0]);
+        std::snprintf (h3Text, sizeof h3Text, "%6.1f/%6.1f/%+6.1f", h3[0], h3[1], h3[1] - h3[0]);
+        std::snprintf (aliasText, sizeof aliasText, "%6.1f/%6.1f/%+6.1f",
+                       alias[0], alias[1], alias[1] - alias[0]);
+        std::printf ("   %-7s %17s %17s %17s\n", band.name, rmsText, h3Text, aliasText);
+    }
+
+    std::printf ("\n--- S3 transformer cost (percent of real time) ---\n");
+    std::printf ("   %-10s %8s %8s %8s\n", "quality", "off", "on", "delta");
+
+    for (int factor : { 0, 1, 2, 3 })
+    {
+        std::array<double, 2> cost {};
+        for (int on = 0; on < 2; ++on)
+        {
+            TubeCompAudioProcessor processor;
+            processor.setPlayConfigDetails (2, 2, sampleRate, blockSize);
+            configureNeutralChain (processor);
+            setParam (processor, ParamIDs::oversample, static_cast<float> (factor));
+            setParam (processor, ParamIDs::circuitModel, 1.0f);
+            setParam (processor, ParamIDs::drive, 12.0f);
+            setParam (processor, ParamIDs::transformer, static_cast<float> (on));
+            processor.prepareToPlay (sampleRate, blockSize);
+            cost[static_cast<size_t> (on)] = measureCostPercent (processor);
+        }
+
+        // The parameter is a zero-based choice index, and the plugin doubles
+        // the rate per step, so choice 1 is 2x -- not 1x.
+        const char* names[] = { "1x", "2x", "4x", "8x" };
+        std::printf ("   %-10s %8.2f %8.2f %8.2f\n",
+                     names[factor], cost[0], cost[1], cost[1] - cost[0]);
+    }
+
+    std::printf ("\n");
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInitialiser;
@@ -421,6 +501,7 @@ int main()
     printCostTable (configs);
     printModelMatch();
     printCompressorCurve();
+    printTransformerDelta();
 
     const auto elapsed = juce::Time::highResolutionTicksToSeconds (
         juce::Time::getHighResolutionTicks() - startTicks);

@@ -1,0 +1,304 @@
+{
+  "schema_version": 1,
+  "plugin": "EON-Vari mu DSP",
+  "format": "VST3",
+  "bundle": "/Users/sungha/Library/Audio/Plug-Ins/VST3/EON-Vari mu DSP.vst3",
+  "binary": "/Users/sungha/Library/Audio/Plug-Ins/VST3/EON-Vari mu DSP.vst3/Contents/MacOS/EON-Vari mu DSP",
+  "sample_rates": [
+    48000
+  ],
+  "block_sizes": [
+    512
+  ],
+  "channels": 2,
+  "parameter_units": "reaper_normalized_0_to_1",
+  "scenarios": [
+    {
+      "id": "smoke_silence",
+      "description": "Starter smoke check: silence renders to a finite buffer.",
+      "signal": {
+        "type": "silence",
+        "seconds": 1.0,
+        "sample_rate": 48000
+      },
+      "expect": {
+        "sample_rate": {
+          "target": 48000,
+          "tolerance": 0
+        },
+        "duration_seconds": {
+          "target": 1.0,
+          "tolerance": 0.0001
+        },
+        "non_finite": {
+          "max": 0
+        }
+      }
+    },
+    {
+      "id": "nominal_feedforward_1k",
+      "description": "Nominal -18 dBFS 1 kHz sine, feedforward detector.",
+      "params_normalized": {
+        "0": 0.5,
+        "1": 0.5,
+        "2": 0.25,
+        "3": 0.5,
+        "4": 0.5,
+        "5": 0.6666667,
+        "6": 1.0,
+        "7": 1.0,
+        "8": 0.7,
+        "9": 0.477911,
+        "10": 0.3966686,
+        "11": 0.3832154,
+        "12": 0.25,
+        "13": 0.0,
+        "14": 0.0,
+        "15": 0.4313262,
+        "16": 0.4082483,
+        "17": 0.5,
+        "18": 0.0,
+        "19": 0.0,
+        "20": 0.5
+      },
+      "signal": {
+        "type": "sine",
+        "freq": 1000.0,
+        "level_db": -18.0,
+        "seconds": 2.0,
+        "sample_rate": 48000
+      },
+      "expect": {
+        "sample_rate": {
+          "target": 48000,
+          "tolerance": 0
+        },
+        "duration_seconds": {
+          "target": 2.0,
+          "tolerance": 0.0001
+        },
+        "channel_peak_delta_db": {
+          "max": 0.2
+        },
+        "non_finite": {
+          "max": 0
+        },
+        "realtime_factor": {
+          "min": 1.0
+        }
+      }
+    },
+    {
+      "id": "nominal_feedback_1k",
+      "description": "Nominal -18 dBFS 1 kHz sine, causal feedback detector.",
+      "params_normalized": {
+        "0": 0.5,
+        "1": 0.5,
+        "2": 0.25,
+        "3": 0.5,
+        "4": 0.5,
+        "5": 0.6666667,
+        "6": 1.0,
+        "7": 1.0,
+        "8": 0.7,
+        "9": 0.477911,
+        "10": 0.3966686,
+        "11": 0.3832154,
+        "12": 0.25,
+        "13": 0.0,
+        "14": 0.0,
+        "15": 0.4313262,
+        "16": 0.4082483,
+        "17": 0.5,
+        "18": 1.0,
+        "19": 0.0,
+        "20": 0.5
+      },
+      "signal": {
+        "type": "sine",
+        "freq": 1000.0,
+        "level_db": -18.0,
+        "seconds": 2.0,
+        "sample_rate": 48000
+      },
+      "expect": {
+        "sample_rate": {
+          "target": 48000,
+          "tolerance": 0
+        },
+        "duration_seconds": {
+          "target": 2.0,
+          "tolerance": 0.0001
+        },
+        "channel_peak_delta_db": {
+          "max": 0.2
+        },
+        "non_finite": {
+          "max": 0
+        },
+        "realtime_factor": {
+          "min": 1.0
+        }
+      }
+    },
+    {
+      "id": "tc6_feedback_1k",
+      "description": "Feedback detector with Fairchild time constant 1, nominal level.",
+      "params_normalized": {
+        "0": 0.5,
+        "1": 0.5,
+        "2": 0.25,
+        "3": 0.5,
+        "4": 0.5,
+        "5": 0.6666667,
+        "6": 1.0,
+        "7": 1.0,
+        "8": 0.7,
+        "9": 0.477911,
+        "10": 0.3966686,
+        "11": 0.3832154,
+        "12": 0.25,
+        "13": 0.0,
+        "14": 0.0,
+        "15": 0.4313262,
+        "16": 0.4082483,
+        "17": 0.5,
+        "18": 1.0,
+        "19": 0.1666667,
+        "20": 0.5
+      },
+      "signal": {
+        "type": "sine",
+        "freq": 1000.0,
+        "level_db": -18.0,
+        "seconds": 2.0,
+        "sample_rate": 48000
+      },
+      "expect": {
+        "sample_rate": {
+          "target": 48000,
+          "tolerance": 0
+        },
+        "duration_seconds": {
+          "target": 2.0,
+          "tolerance": 0.0001
+        },
+        "channel_peak_delta_db": {
+          "max": 0.2
+        },
+        "non_finite": {
+          "max": 0
+        },
+        "realtime_factor": {
+          "min": 1.0
+        }
+      }
+    },
+    {
+      "id": "latver_feedback_1k",
+      "description": "Feedback detector with lateral/vertical stereo detection, nominal level.",
+      "params_normalized": {
+        "0": 0.5,
+        "1": 0.5,
+        "2": 0.25,
+        "3": 0.5,
+        "4": 0.5,
+        "5": 0.6666667,
+        "6": 1.0,
+        "7": 1.0,
+        "8": 0.7,
+        "9": 0.477911,
+        "10": 0.3966686,
+        "11": 0.3832154,
+        "12": 0.25,
+        "13": 0.0,
+        "14": 0.0,
+        "15": 0.4313262,
+        "16": 0.4082483,
+        "17": 0.5,
+        "18": 1.0,
+        "19": 0.0,
+        "20": 1.0
+      },
+      "signal": {
+        "type": "sine",
+        "freq": 1000.0,
+        "level_db": -18.0,
+        "seconds": 2.0,
+        "sample_rate": 48000
+      },
+      "expect": {
+        "sample_rate": {
+          "target": 48000,
+          "tolerance": 0
+        },
+        "duration_seconds": {
+          "target": 2.0,
+          "tolerance": 0.0001
+        },
+        "channel_peak_delta_db": {
+          "max": 0.2
+        },
+        "non_finite": {
+          "max": 0
+        },
+        "realtime_factor": {
+          "min": 1.0
+        }
+      }
+    },
+    {
+      "id": "hot_feedforward_1k",
+      "description": "Hot -12 dBFS 1 kHz sine, feedforward detector (mild headroom check).",
+      "params_normalized": {
+        "0": 0.5,
+        "1": 0.5,
+        "2": 0.25,
+        "3": 0.5,
+        "4": 0.5,
+        "5": 0.6666667,
+        "6": 1.0,
+        "7": 1.0,
+        "8": 0.7,
+        "9": 0.477911,
+        "10": 0.3966686,
+        "11": 0.3832154,
+        "12": 0.25,
+        "13": 0.0,
+        "14": 0.0,
+        "15": 0.4313262,
+        "16": 0.4082483,
+        "17": 0.5,
+        "18": 0.0,
+        "19": 0.0,
+        "20": 0.5
+      },
+      "signal": {
+        "type": "sine",
+        "freq": 1000.0,
+        "level_db": -12.0,
+        "seconds": 2.0,
+        "sample_rate": 48000
+      },
+      "expect": {
+        "sample_rate": {
+          "target": 48000,
+          "tolerance": 0
+        },
+        "duration_seconds": {
+          "target": 2.0,
+          "tolerance": 0.0001
+        },
+        "channel_peak_delta_db": {
+          "max": 0.2
+        },
+        "non_finite": {
+          "max": 0
+        },
+        "realtime_factor": {
+          "min": 1.0
+        }
+      }
+    }
+  ]
+}
