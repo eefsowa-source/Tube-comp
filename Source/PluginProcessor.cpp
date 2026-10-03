@@ -172,7 +172,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout TubeCompAudioProcessor::crea
 
     params.push_back (std::make_unique<juce::AudioParameterFloat> (
         ParamIDs::lookAhead, "Look-Ahead",
-        juce::NormalisableRange<float> (0.1f, 20.0f, 0.1f, 0.6f), 5.0f,
+        juce::NormalisableRange<float> (0.0f, 20.0f, 0.1f, 0.6f), 5.0f,
         juce::AudioParameterFloatAttributes().withLabel ("ms")));
 
     params.push_back (std::make_unique<juce::AudioParameterFloat> (

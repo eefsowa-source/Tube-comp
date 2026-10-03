@@ -41,8 +41,10 @@ public:
 
     void process (juce::AudioBuffer<float>& buffer) noexcept;
 
-    /** Configured look-ahead length in samples; contributes to the reported plugin latency. */
-    size_t getLookAheadSamples() const noexcept { return lookAheadSamples; }
+    /** Active look-ahead in samples; contributes to the reported plugin latency.
+        A feedback detector reads the compressed output, so it cannot look
+        ahead: in feedback mode the delay is bypassed and this returns 0. */
+    size_t getLookAheadSamples() const noexcept { return feedbackMode ? 0 : lookAheadSamples; }
 
     /** Upper bound of the look-ahead parameter. Delay buffers are preallocated for this in prepare(). */
     static constexpr float maxLookAheadMs = 20.0f;
@@ -80,7 +82,12 @@ public:
     }
 
 private:
+    /** Feed-forward gain computer: target GR (dB) for an *input* level. */
     float computeTargetGainReductionDb (float levelDb) const noexcept;
+    /** Feedback gain computer: target GR (dB) for an *output* level, chosen so
+        the closed loop lands on exactly the same static curve (threshold,
+        ratio, knee) as the feed-forward computer. */
+    float computeFeedbackTargetGainReductionDb (float outputLevelDb) const noexcept;
 
     double sampleRate = 44100.0;
     int channelCount = 2;
