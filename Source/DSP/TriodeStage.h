@@ -73,6 +73,24 @@ public:
         compressor rather than double-counting the reduction. */
     void setControlBiasVolts (double volts) noexcept;
 
+    /** Per-sample control source for the next process() call(s): base-rate
+        gain reduction in dB (one value per base-rate sample), each held for
+        `oversamplingFactor` stage samples and mapped to -voltsPerDb * GR
+        (clamped to the control range). Overrides setControlBiasVolts() until
+        clearControlBiasSource(). The pointer must stay valid while processing;
+        nothing is copied or allocated. */
+    void setControlBiasSource (const float* gainReductionDb, size_t numBaseSamples,
+                               size_t oversamplingFactor, double voltsPerDb) noexcept
+    {
+        controlSource = gainReductionDb;
+        controlSourceLength = numBaseSamples;
+        controlSourceFactor = juce::jmax<size_t> (1, oversamplingFactor);
+        controlSourceVoltsPerDb = voltsPerDb;
+        controlSourcePosition = 0;
+    }
+
+    void clearControlBiasSource() noexcept { controlSource = nullptr; controlSourceLength = 0; }
+
     /** Current requested control bias, in volts. */
     double getControlBiasVolts() const noexcept { return controlBiasTargetVolts; }
 
@@ -203,6 +221,10 @@ private:
     RestingState resting;
     double smoothedControlBias = 0.0;
     std::vector<ControlFrame> controlTrace; // preallocated in prepare()
+
+    const float* controlSource = nullptr;
+    size_t controlSourceLength = 0, controlSourceFactor = 1, controlSourcePosition = 0;
+    double controlSourceVoltsPerDb = 0.0;
 
     juce::dsp::ProcessorDuplicator<juce::dsp::IIR::Filter<float>,
                                    juce::dsp::IIR::Coefficients<float>> tiltFilter;
