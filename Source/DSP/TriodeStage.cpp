@@ -193,6 +193,18 @@ void TriodeStage::renderControlTrace (size_t numSamples) noexcept
 
     for (size_t i = 0; i < numSamples; ++i)
     {
+        // Per-sample source (vari-mu coupling from the compressor's GR trace):
+        // hold each base-rate value for one oversampling period. The position
+        // runs across chunks, so the trajectory is independent of block size.
+        if (controlSource != nullptr && controlSourceLength > 0)
+        {
+            const auto baseIndex = juce::jmin (controlSourcePosition / controlSourceFactor,
+                                               controlSourceLength - 1);
+            ++controlSourcePosition;
+            controlBiasTargetVolts = juce::jlimit (-maxControlBiasVolts, 0.0,
+                -controlSourceVoltsPerDb * static_cast<double> (controlSource[baseIndex]));
+        }
+
         // Vari-mu control voltage: one-pole toward the target so the operating
         // point cannot step.
         smoothedControlBias += smoothing * (controlBiasTargetVolts - smoothedControlBias);
@@ -212,6 +224,9 @@ void TriodeStage::renderControlTrace (size_t numSamples) noexcept
         frame.gainComp = gainCompForBias (smoothedControlBias);
         frame.restPlateV = resting.plateVpk + resting.cathodeV;
     }
+
+    if (controlSource != nullptr)
+        controlBiasGainComp = gainCompForBias (controlBiasTargetVolts); // keep the accessor current
 }
 
 float TriodeStage::processSample (ChannelState& s, float xIn, const ControlFrame& control) noexcept

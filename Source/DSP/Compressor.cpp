@@ -17,10 +17,12 @@ std::array<float, 2> toControlDomain (float left, float right, int linkMode) noe
 }
 }
 
-void Compressor::prepare (double newSampleRate, int numChannels)
+void Compressor::prepare (double newSampleRate, int numChannels, int maxBlockSize)
 {
     sampleRate = newSampleRate;
     channelCount = numChannels;
+    gainReductionTrace.assign (static_cast<size_t> (juce::jmax (1, maxBlockSize)), 0.0f);
+    gainReductionTraceLength = 0;
 
     // Preallocate the longest possible look-ahead once, here on an allocation-
     // safe thread. setLookAheadMs() runs from processBlock() and must never
@@ -221,6 +223,8 @@ void Compressor::process (juce::AudioBuffer<float>& buffer) noexcept
     const float feedbackCoeffFloor = feedbackMode ? (ratio - 1.0f) / ratio : 0.0f;
 
     blockGainDb.fill (0.0f);
+    gainReductionTraceLength = juce::jmin (static_cast<size_t> (juce::jmax (0, numSamples)),
+                                           gainReductionTrace.size());
 
     for (int i = 0; i < numSamples; ++i)
     {
@@ -330,6 +334,8 @@ void Compressor::process (juce::AudioBuffer<float>& buffer) noexcept
         }
         for (size_t path = 0; path < blockGainDb.size(); ++path)
             blockGainDb[path] = juce::jmax (blockGainDb[path], currentGainDb[path]);
+        if (static_cast<size_t> (i) < gainReductionTraceLength)
+            gainReductionTrace[static_cast<size_t> (i)] = juce::jmax (currentGainDb[0], currentGainDb[1]);
         if (effectiveLinkMode == 2)
         {
             const auto delayedControl = toControlDomain (delayedSamples[0], delayedSamples[1], effectiveLinkMode);
