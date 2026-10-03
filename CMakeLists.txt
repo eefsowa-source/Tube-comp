@@ -5,9 +5,31 @@ project(eonchild VERSION 0.1.0)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-add_subdirectory(/Users/sungha/JUCE JUCE)
-
 include(FetchContent)
+
+# JUCE source: an explicit -DEON_JUCE_DIR=<checkout> wins, then the original
+# macOS development checkout if it exists, otherwise the pinned release is
+# fetched. Keeps the existing Mac workflow unchanged while letting other
+# machines (Linux CI, fresh clones) configure without editing this file.
+set(EON_JUCE_DIR "" CACHE PATH "Local JUCE checkout; empty = auto-detect, then fetch")
+set(EON_JUCE_GIT_TAG "9.0.3" CACHE STRING "JUCE tag fetched when no local checkout is used")
+
+if (NOT EON_JUCE_DIR AND EXISTS "/Users/sungha/JUCE/CMakeLists.txt")
+    set(EON_JUCE_DIR "/Users/sungha/JUCE")
+endif()
+
+if (EON_JUCE_DIR)
+    message(STATUS "Using local JUCE: ${EON_JUCE_DIR}")
+    add_subdirectory(${EON_JUCE_DIR} JUCE)
+else()
+    message(STATUS "Fetching JUCE ${EON_JUCE_GIT_TAG}")
+    FetchContent_Declare(JUCE
+        GIT_REPOSITORY https://github.com/juce-framework/JUCE.git
+        GIT_TAG ${EON_JUCE_GIT_TAG}
+        GIT_SHALLOW TRUE)
+    FetchContent_MakeAvailable(JUCE)
+endif()
+
 FetchContent_Declare(melatonin_inspector
     GIT_REPOSITORY https://github.com/sudara/melatonin_inspector.git
     GIT_TAG 9c483f865854d83fe9873e1c20e3fd772f695f80
@@ -59,6 +81,16 @@ target_link_libraries(eonchild
 target_link_libraries(eonchild PUBLIC "$<$<CONFIG:Debug>:melatonin_inspector>")
 target_compile_definitions(eonchild PUBLIC "$<$<CONFIG:Debug>:MELATONIN_INSPECTOR_ENABLED=1>")
 
+# Test executables compile JUCE modules themselves (outside the plugin target),
+# so they need the same opt-outs the plugin uses: without them juce_core pulls
+# in libcurl on Linux and the link fails.
+function(eon_test_definitions target)
+    target_compile_definitions(${target} PRIVATE
+        JUCE_STANDALONE_APPLICATION=1
+        JUCE_USE_CURL=0
+        JUCE_WEB_BROWSER=0)
+endfunction()
+
 # Offline DSP sanity check (no DAW/GUI needed) -- feeds a stress signal through
 # the WDF triode model and checks for NaN/Inf/divergence.
 add_executable(eonchild_DspTest
@@ -66,54 +98,54 @@ add_executable(eonchild_DspTest
     Source/DSP/TriodeStage.cpp)
 
 target_link_libraries(eonchild_DspTest PRIVATE juce::juce_dsp juce::juce_recommended_config_flags)
-target_compile_definitions(eonchild_DspTest PRIVATE JUCE_STANDALONE_APPLICATION=1)
+eon_test_definitions(eonchild_DspTest)
 
 add_executable(eonchild_CompressorTest
     Tests/CompressorSanityTest.cpp
     Source/DSP/Compressor.cpp)
 
 target_link_libraries(eonchild_CompressorTest PRIVATE juce::juce_audio_basics juce::juce_recommended_config_flags)
-target_compile_definitions(eonchild_CompressorTest PRIVATE JUCE_STANDALONE_APPLICATION=1)
+eon_test_definitions(eonchild_CompressorTest)
 
 add_executable(eonchild_CompressorProgramTest
     Tests/CompressorProgramTest.cpp
     Source/DSP/Compressor.cpp)
 
 target_link_libraries(eonchild_CompressorProgramTest PRIVATE juce::juce_audio_basics juce::juce_recommended_config_flags)
-target_compile_definitions(eonchild_CompressorProgramTest PRIVATE JUCE_STANDALONE_APPLICATION=1)
+eon_test_definitions(eonchild_CompressorProgramTest)
 
 add_executable(eonchild_CompressorFeedbackTest
     Tests/CompressorFeedbackTest.cpp
     Source/DSP/Compressor.cpp)
 
 target_link_libraries(eonchild_CompressorFeedbackTest PRIVATE juce::juce_audio_basics juce::juce_recommended_config_flags)
-target_compile_definitions(eonchild_CompressorFeedbackTest PRIVATE JUCE_STANDALONE_APPLICATION=1)
+eon_test_definitions(eonchild_CompressorFeedbackTest)
 
 add_executable(eonchild_TriodeBiasProgramTest
     Tests/TriodeBiasProgramTest.cpp
     Source/DSP/TriodeStage.cpp)
 
 target_link_libraries(eonchild_TriodeBiasProgramTest PRIVATE juce::juce_dsp juce::juce_recommended_config_flags)
-target_compile_definitions(eonchild_TriodeBiasProgramTest PRIVATE JUCE_STANDALONE_APPLICATION=1)
+eon_test_definitions(eonchild_TriodeBiasProgramTest)
 
 add_executable(eonchild_KorenSlopeTest
     Tests/KorenSlopeTest.cpp)
 
 target_link_libraries(eonchild_KorenSlopeTest PRIVATE juce::juce_dsp juce::juce_recommended_config_flags)
-target_compile_definitions(eonchild_KorenSlopeTest PRIVATE JUCE_STANDALONE_APPLICATION=1)
+eon_test_definitions(eonchild_KorenSlopeTest)
 
 add_executable(eonchild_DryDelayLineTest
     Tests/DryDelayLineTest.cpp)
 
 target_link_libraries(eonchild_DryDelayLineTest PRIVATE juce::juce_audio_basics juce::juce_recommended_config_flags)
-target_compile_definitions(eonchild_DryDelayLineTest PRIVATE JUCE_STANDALONE_APPLICATION=1)
+eon_test_definitions(eonchild_DryDelayLineTest)
 
 add_executable(eonchild_SaturatorTest
     Tests/SaturatorTest.cpp
     Source/DSP/TubeSaturator.cpp)
 
 target_link_libraries(eonchild_SaturatorTest PRIVATE juce::juce_dsp juce::juce_recommended_config_flags)
-target_compile_definitions(eonchild_SaturatorTest PRIVATE JUCE_STANDALONE_APPLICATION=1)
+eon_test_definitions(eonchild_SaturatorTest)
 
 # End-to-end processor check: links the plugin's own shared code so it exercises
 # the real processBlock latency reporting, dry alignment, and bypass path.
@@ -160,6 +192,24 @@ target_link_libraries(eonchild_EditorSnapshot PRIVATE
     juce::juce_gui_extra
     juce::juce_recommended_config_flags)
 
+# Processor-level regression tests (one per fixed defect). They link the
+# plugin's shared code like eonchild_ProcessorTest does.
+function(eon_add_processor_test name source)
+    add_executable(${name} ${source})
+    target_link_libraries(${name} PRIVATE
+        eonchild
+        juce::juce_audio_utils
+        juce::juce_dsp
+        juce::juce_recommended_config_flags)
+endfunction()
+
+eon_add_processor_test(eonchild_TriodePolarityTest Tests/TriodePolarityTest.cpp)
+eon_add_processor_test(eonchild_HostBypassTest Tests/HostBypassTest.cpp)
+eon_add_processor_test(eonchild_FeedbackRatioTest Tests/FeedbackRatioTest.cpp)
+eon_add_processor_test(eonchild_VariMuThumpTest Tests/VariMuThumpTest.cpp)
+eon_add_processor_test(eonchild_BlockSizeInvarianceTest Tests/BlockSizeInvarianceTest.cpp)
+eon_add_processor_test(eonchild_MixAlignmentTest Tests/MixAlignmentTest.cpp)
+
 enable_testing()
 add_test(NAME dsp_sanity COMMAND eonchild_DspTest)
 add_test(NAME compressor_sanity COMMAND eonchild_CompressorTest)
@@ -170,3 +220,9 @@ add_test(NAME dry_delay_line COMMAND eonchild_DryDelayLineTest)
 add_test(NAME saturator_shape COMMAND eonchild_SaturatorTest)
 add_test(NAME processor_latency COMMAND eonchild_ProcessorTest)
 add_test(NAME koren_slope COMMAND eonchild_KorenSlopeTest)
+add_test(NAME triode_polarity COMMAND eonchild_TriodePolarityTest)
+add_test(NAME host_bypass COMMAND eonchild_HostBypassTest)
+add_test(NAME feedback_ratio COMMAND eonchild_FeedbackRatioTest)
+add_test(NAME vari_mu_thump COMMAND eonchild_VariMuThumpTest)
+add_test(NAME block_size_invariance COMMAND eonchild_BlockSizeInvarianceTest)
+add_test(NAME mix_alignment COMMAND eonchild_MixAlignmentTest)
