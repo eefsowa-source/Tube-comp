@@ -213,6 +213,9 @@ void TubeCompAudioProcessor::updateOversamplingIfNeeded (int newFactorChoice)
 
     currentOversamplingChoice = newFactorChoice;
     oversampling = oversamplingStages[static_cast<size_t> (newFactorChoice)].get();
+    // The pad joins a filter chain that kept its old state; clearing it is
+    // allocation-free and avoids replaying stale audio from the last visit.
+    oversamplingPads[static_cast<size_t> (newFactorChoice)].reset();
 }
 
 float TubeCompAudioProcessor::getInputLevelDb (int channel) const noexcept
@@ -272,15 +275,41 @@ void TubeCompAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlo
     // Build the oversamplers first: the dry reference has to be long enough to
     // cover the largest look-ahead plus whichever oversampler reports the most
     // filter delay, so the dry path can be aligned with the wet path exactly.
+    //
+    // Linear-phase FIR half-bands: the wet path's linear response is then a
+    // pure delay, which the dry path can match exactly, so partial Mix settings
+    // blend instead of comb filtering. (The polyphase IIR half-bands had lower
+    // latency but frequency-dependent phase, and their fractional latency was
+    // truncated for the dry delay: Mix 50 % lost up to ~10 dB in the top
+    // octave.)
+    //
+    // The FIR latency of an N-x chain is a multiple of 1/N base samples, so
+    // instead of JUCE's integer-latency option (a Thiran allpass at the base
+    // rate, which is only flat in group delay at low frequencies and left up
+    // to ~70 deg of HF phase error against the dry path) the fractional
+    // remainder is padded with a whole number of samples at the oversampled
+    // rate. Total wet latency is then an exact integer with linear phase.
     int maxOversamplingLatency = 0;
     for (int choice = 0; choice < static_cast<int> (oversamplingStages.size()); ++choice)
     {
-        oversamplingStages[static_cast<size_t> (choice)] = std::make_unique<juce::dsp::Oversampling<float>> (
+        const auto index = static_cast<size_t> (choice);
+        const int factor = 1 << choice;
+        oversamplingStages[index] = std::make_unique<juce::dsp::Oversampling<float>> (
             numChannels, static_cast<size_t> (choice),
-            juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR, true);
-        oversamplingStages[static_cast<size_t> (choice)]->initProcessing (safeSamplesPerBlock);
-        maxOversamplingLatency = juce::jmax (maxOversamplingLatency, static_cast<int> (
-            oversamplingStages[static_cast<size_t> (choice)]->getLatencyInSamples()));
+            juce::dsp::Oversampling<float>::filterHalfBandFIREquiripple,
+            true,    // maximum quality
+            false);  // fractional remainder handled by the OS-rate pad below
+        oversamplingStages[index]->initProcessing (safeSamplesPerBlock);
+
+        const double filterLatency = static_cast<double> (oversamplingStages[index]->getLatencyInSamples());
+        const int wholeLatency = static_cast<int> (std::ceil (filterLatency - 1.0e-6));
+        const int padSamples = static_cast<int> (std::lround ((wholeLatency - filterLatency) * factor));
+        jassert (std::abs ((wholeLatency - filterLatency) * factor - padSamples) < 1.0e-3);
+
+        oversamplingLatencySamples[index] = wholeLatency;
+        oversamplingPads[index].prepare (numChannels, padSamples);
+        oversamplingPads[index].setDelaySamples (padSamples);
+        maxOversamplingLatency = juce::jmax (maxOversamplingLatency, wholeLatency);
     }
 
     const int maxLookAheadSamples = static_cast<int> (
@@ -312,7 +341,7 @@ void TubeCompAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlo
     // correct before the first block; processBlock keeps it current afterwards.
     int initialLatency = static_cast<int> (compressor.getLookAheadSamples());
     if (oversampling != nullptr)
-        initialLatency += static_cast<int> (oversampling->getLatencyInSamples());
+        initialLatency += oversamplingLatencySamples[static_cast<size_t> (currentOversamplingChoice)];
     lastReportedLatency = initialLatency;
     setLatencySamples (initialLatency);
 
@@ -470,6 +499,17 @@ void TubeCompAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
     if (useTransformer)
         transformerStages[activeFactor].process (context);
 
+    // Round the FIR chain's fractional latency up to a whole base sample.
+    {
+        std::array<float*, 8> osChannels {};
+        const int numOsChannels = juce::jmin (static_cast<int> (osChannels.size()),
+                                              static_cast<int> (oversampledBlock.getNumChannels()));
+        for (int ch = 0; ch < numOsChannels; ++ch)
+            osChannels[static_cast<size_t> (ch)] = oversampledBlock.getChannelPointer (static_cast<size_t> (ch));
+        oversamplingPads[activeFactor].processInPlace (osChannels.data(), numOsChannels,
+                                                       static_cast<int> (oversampledBlock.getNumSamples()));
+    }
+
     oversampling->processSamplesDown (block);
 
     for (int i = 0; i < numSamples; ++i)
@@ -502,7 +542,7 @@ int TubeCompAudioProcessor::syncLatencyWithParameters()
     // Latency = compressor look-ahead + oversampling filter delay.
     int totalLatency = static_cast<int> (compressor.getLookAheadSamples());
     if (oversampling != nullptr)
-        totalLatency += static_cast<int> (oversampling->getLatencyInSamples());
+        totalLatency += oversamplingLatencySamples[static_cast<size_t> (currentOversamplingChoice)];
 
     if (totalLatency != lastReportedLatency)
     {
