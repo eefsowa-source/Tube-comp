@@ -176,12 +176,15 @@ int main()
                  static_cast<double> (feedback.gainReductionDb), feedback.outputRmsDb);
 
     bool passed = true;
-    // A causal feedback detector must produce a distinct, less feed-forward-
-    // aggressive steady-state curve for the same input level.
+    // The feedback gain computer is the inverse of the feed-forward one, so
+    // both topologies settle on the same static curve: Ratio and Knee mean the
+    // same thing in either mode (the topologies differ in their dynamics).
+    // This used to assert a weaker feedback curve, which was the 2 - 1/R ratio
+    // cap bug (knob 4 -> 1.75:1); see FeedbackRatioTest for the full curve.
     passed = passed && feedforward.gainReductionDb > 8.0f;
-    passed = passed && feedback.gainReductionDb > 3.0f;
-    passed = passed && feedforward.gainReductionDb > feedback.gainReductionDb + 2.0f;
-    passed = passed && feedback.outputRmsDb > feedforward.outputRmsDb + 1.0;
+    passed = passed && feedback.gainReductionDb > 8.0f;
+    passed = passed && std::abs (feedforward.gainReductionDb - feedback.gainReductionDb) < 1.0f;
+    passed = passed && std::abs (feedback.outputRmsDb - feedforward.outputRmsDb) < 1.0;
     passed = passed && renderFeedbackStress();
     passed = passed && renderLookAheadSwitch();
     passed = passed && renderLookAheadHistory();
