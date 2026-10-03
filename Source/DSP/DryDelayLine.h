@@ -63,6 +63,31 @@ public:
         }
     }
 
+    /** In-place variant for raw channel pointers (e.g. an oversampled
+        AudioBlock): each sample is stored before the delayed one is read back,
+        so source and destination may alias. */
+    void processInPlace (float* const* channels, int numChannels, int numSamples) noexcept
+    {
+        const int usable = juce::jmin (numChannels, buffer.getNumChannels());
+
+        for (int i = 0; i < numSamples; ++i)
+        {
+            int readPos = writePos - delaySamples;
+            if (readPos < 0)
+                readPos += capacity;
+
+            for (int ch = 0; ch < usable; ++ch)
+            {
+                auto* ring = buffer.getWritePointer (ch);
+                ring[writePos] = channels[ch][i];
+                channels[ch][i] = ring[readPos];
+            }
+
+            if (++writePos >= capacity)
+                writePos = 0;
+        }
+    }
+
 private:
     juce::AudioBuffer<float> buffer;
     int capacity = 0;
