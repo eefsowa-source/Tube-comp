@@ -474,6 +474,8 @@ TubeCompAudioProcessorEditor::TubeCompAudioProcessorEditor (TubeCompAudioProcess
         lookAndFeel.setPrintedSweep (slider, -150.0f, 150.0f);
 
     updateTimeConstantDimming();
+    updateLookAheadDimming();
+    topologyBox.onChange = [this] { updateLookAheadDimming(); };
     updateMeterMode();
     startTimerHz (15);
 
@@ -530,6 +532,15 @@ void TubeCompAudioProcessorEditor::updateTimeConstantDimming()
     const auto alpha = customTiming ? 1.0f : 0.35f;
     attackLabel.setAlpha (alpha);
     releaseLabel.setAlpha (alpha);
+}
+
+void TubeCompAudioProcessorEditor::updateLookAheadDimming()
+{
+    // A feedback detector reads the compressed output and cannot look ahead;
+    // the processor ignores Look-Ahead (and its latency) in that mode.
+    const bool feedForward = topologyBox.getSelectedItemIndex() == 0;
+    lookAheadSlider.setEnabled (feedForward);
+    lookAheadLabel.setAlpha (feedForward ? 1.0f : 0.35f);
 }
 
 void TubeCompAudioProcessorEditor::updateMeterMode()
@@ -645,6 +656,7 @@ void TubeCompAudioProcessorEditor::parameterChanged (const juce::String&, float)
 
 void TubeCompAudioProcessorEditor::handleAsyncUpdate()
 {
+    updateLookAheadDimming();
     commitGestureTransaction();
 }
 
