@@ -224,5 +224,10 @@ float TriodeStage::processSample (ChannelState& s, float xIn) noexcept
     s.outPrevIn = vp;
     s.outPrevOut = vOut;
 
-    return static_cast<float> (vOut * outputTrim * s.compGain);
+    // A common-cathode stage inverts: a positive grid swing pulls the plate
+    // down. Hardware restores absolute polarity with a second stage or the
+    // output transformer; the model does it here, so the wet path stays in
+    // phase with the dry reference (Mix blends instead of cancelling) and
+    // bypass does not flip polarity.
+    return static_cast<float> (-vOut * outputTrim * s.compGain);
 }

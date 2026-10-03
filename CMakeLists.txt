@@ -203,6 +203,7 @@ function(eon_add_processor_test name source)
         juce::juce_recommended_config_flags)
 endfunction()
 
+eon_add_processor_test(eonchild_TriodePolarityTest Tests/TriodePolarityTest.cpp)
 
 enable_testing()
 add_test(NAME dsp_sanity COMMAND eonchild_DspTest)
@@ -214,3 +215,4 @@ add_test(NAME dry_delay_line COMMAND eonchild_DryDelayLineTest)
 add_test(NAME saturator_shape COMMAND eonchild_SaturatorTest)
 add_test(NAME processor_latency COMMAND eonchild_ProcessorTest)
 add_test(NAME koren_slope COMMAND eonchild_KorenSlopeTest)
+add_test(NAME triode_polarity COMMAND eonchild_TriodePolarityTest)
