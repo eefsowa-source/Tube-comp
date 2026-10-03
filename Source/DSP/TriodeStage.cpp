@@ -62,6 +62,7 @@ void TriodeStage::prepare (const juce::dsp::ProcessSpec& spec)
     updateCathodeResistance();
 
     channels.assign (spec.numChannels, ChannelState {});
+    controlTrace.assign (juce::jmax<size_t> (1, spec.maximumBlockSize), ControlFrame {});
 
     // Control-bias smoothing runs at the oversampled rate this stage is prepared
     // with, so the vari-mu coupling tracks the GR envelope without block-rate steps.
@@ -94,18 +95,9 @@ void TriodeStage::prepare (const juce::dsp::ProcessSpec& spec)
     quiescentVk = Vk;
     quiescentVpk = Vpk;
 
-    for (auto& ch : channels)
-    {
-        ch.cathodeV = quiescentVk;
-        ch.plateVpk = quiescentVpk;
-        ch.plateVpkPrev = quiescentVpk;
-        // The output coupling capacitor starts charged to the DC plate-to-ground
-        // voltage. Without this the first sample passes that whole DC voltage.
-        ch.outPrevIn = quiescentVpk + quiescentVk;
-    }
-
     tiltFilter.prepare (spec);
     setBrightness (0.5f);
+    reset();
 }
 
 void TriodeStage::reset()
@@ -116,11 +108,16 @@ void TriodeStage::reset()
         ch.cathodeV = quiescentVk;
         ch.plateVpk = quiescentVpk;
         ch.plateVpkPrev = quiescentVpk;
-        ch.outPrevIn = quiescentVpk + quiescentVk;
+        // The coupling network sees the plate voltage relative to the resting
+        // stage, which is 0 V at rest, so the output capacitor starts settled
+        // (no DC step on the first samples).
+        ch.outPrevIn = 0.0;
         ch.outPrevOut = 0.0;
-        ch.controlBias = controlBiasTargetVolts;
-        ch.compGain = controlBiasGainComp;
     }
+    resting.cathodeV = quiescentVk;
+    resting.plateVpk = quiescentVpk;
+    resting.plateVpkPrev = quiescentVpk;
+    smoothedControlBias = controlBiasTargetVolts;
     tiltFilter.reset();
 }
 
@@ -172,8 +169,6 @@ void TriodeStage::setControlBiasVolts (double volts) noexcept
 
 void TriodeStage::updateControlBiasCompensation() noexcept
 {
-    const double depth = juce::jlimit (0.0, maxControlBiasVolts, -controlBiasTargetVolts);
-
     // Small-signal gain loss (dB) vs control-bias depth, measured through the
     // stage (drive 6 dB, bias ratio 0.5, -6 dBFS 1 kHz):
     //   0.45 V -> 0.74 dB, 0.90 V -> 1.70 dB, 1.35 V -> 2.93 dB, 1.80 V -> 4.49 dB
@@ -182,24 +177,55 @@ void TriodeStage::updateControlBiasCompensation() noexcept
     // it is nearly independent of the cathode resistor. Compensating it keeps the
     // compressor as the sole owner of the level law: the coupling moves the
     // harmonic character, not the loudness.
-    controlBiasGainComp = juce::Decibels::decibelsToGain (1.36 * depth + 0.63 * depth * depth);
+    controlBiasGainComp = gainCompForBias (controlBiasTargetVolts);
 }
 
-float TriodeStage::processSample (ChannelState& s, float xIn) noexcept
+double TriodeStage::gainCompForBias (double controlBiasVolts) noexcept
+{
+    const double depth = juce::jlimit (0.0, maxControlBiasVolts, -controlBiasVolts);
+    return juce::Decibels::decibelsToGain (1.36 * depth + 0.63 * depth * depth);
+}
+
+void TriodeStage::renderControlTrace (size_t numSamples) noexcept
+{
+    jassert (numSamples <= controlTrace.size());
+    const double smoothing = 1.0 - controlBiasSmoothCoeff;
+
+    for (size_t i = 0; i < numSamples; ++i)
+    {
+        // Vari-mu control voltage: one-pole toward the target so the operating
+        // point cannot step.
+        smoothedControlBias += smoothing * (controlBiasTargetVolts - smoothedControlBias);
+
+        // Advance the resting stage with exactly the per-sample update the
+        // signal channels use (grid at 0 V), so with no signal the two are
+        // bit-identical and the difference is exactly zero.
+        const double vgk = -resting.cathodeV + smoothedControlBias;
+        const double warmStart = 2.0 * resting.plateVpk - resting.plateVpkPrev;
+        const auto solved = solvePlateVoltage (vgk, Vb - resting.cathodeV, Rp, triodeParams, warmStart);
+        resting.plateVpkPrev = resting.plateVpk;
+        resting.plateVpk = solved.vpk;
+        resting.cathodeV += (1.0 - cathodeLowpassCoeff) * (solved.ip * Rk - resting.cathodeV);
+
+        auto& frame = controlTrace[i];
+        frame.bias = smoothedControlBias;
+        frame.gainComp = gainCompForBias (smoothedControlBias);
+        frame.restPlateV = resting.plateVpk + resting.cathodeV;
+    }
+}
+
+float TriodeStage::processSample (ChannelState& s, float xIn, const ControlFrame& control) noexcept
 {
     const double vinGrid = static_cast<double> (xIn) * driveVolts;
-
-    // Vari-mu control voltage: one-pole toward the block target so the operating
-    // point cannot step between blocks.
-    s.controlBias += (1.0 - controlBiasSmoothCoeff) * (controlBiasTargetVolts - s.controlBias);
-    s.compGain += (1.0 - controlBiasSmoothCoeff) * (controlBiasGainComp - s.compGain);
 
     // Grid coupling network: RC highpass (Cin, Rg), DC-blocker form.
     const double vg = vinGrid - s.gridPrevIn + gridHighpassCoeff * s.gridPrevOut;
     s.gridPrevIn = vinGrid;
     s.gridPrevOut = vg;
 
-    const double vgk = vg - s.cathodeV + s.controlBias;
+    // The vari-mu control voltage is injected inside the tube equation, past
+    // the input coupling high-pass, so it moves the operating point.
+    const double vgk = vg - s.cathodeV + control.bias;
     const double openCircuitV = Vb - s.cathodeV;
 
     // Linear prediction from the last two plate voltages. The signal moves
@@ -217,7 +243,10 @@ float TriodeStage::processSample (ChannelState& s, float xIn) noexcept
     // Rk||Ck time constant, giving program-dependent self-bias compression.
     s.cathodeV += (1.0 - cathodeLowpassCoeff) * (ip * Rk - s.cathodeV);
 
-    const double vp = s.plateVpk + s.cathodeV; // plate-to-ground
+    // Plate-to-ground, relative to the resting stage at the same bias: the
+    // operating-point motion caused by the control voltage (and by Rk trims)
+    // cancels; the signal and its own DC sag remain.
+    const double vp = s.plateVpk + s.cathodeV - control.restPlateV;
 
     // Output coupling network: RC highpass (Cout, Rload).
     const double vOut = vp - s.outPrevIn + outputHighpassCoeff * s.outPrevOut;
@@ -229,5 +258,5 @@ float TriodeStage::processSample (ChannelState& s, float xIn) noexcept
     // output transformer; the model does it here, so the wet path stays in
     // phase with the dry reference (Mix blends instead of cancelling) and
     // bypass does not flip polarity.
-    return static_cast<float> (-vOut * outputTrim * s.compGain);
+    return static_cast<float> (-vOut * outputTrim * control.gainComp);
 }
