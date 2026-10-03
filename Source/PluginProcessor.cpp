@@ -304,7 +304,7 @@ void TubeCompAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlo
     updateOversamplingIfNeeded (juce::jlimit (0, static_cast<int> (oversamplingStages.size()) - 1,
         static_cast<int> (apvts.getRawParameterValue (ParamIDs::oversample)->load())));
 
-    compressor.prepare (sampleRate, numChannels);
+    compressor.prepare (sampleRate, numChannels, static_cast<int> (safeSamplesPerBlock));
     compressor.setLookAheadMs (apvts.getRawParameterValue (ParamIDs::lookAhead)->load());
     compressor.setFeedbackMode (apvts.getRawParameterValue (ParamIDs::topology)->load() > 0.5f);
 
@@ -444,15 +444,19 @@ void TubeCompAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
 
     if (useTriode)
     {
-        // Vari-mu coupling: the compressor's gain reduction (block peak, so a
-        // transient is not missed) drives the tube's grid colder, so the harmonic
-        // character grows with GR instead of staying fixed. Only the triode path
-        // has an operating point to move; the Fast waveshaper has no bias.
-        const float blockGrDb = juce::jmax (compressor.getBlockGainReductionDb (0),
-                                            compressor.getBlockGainReductionDb (1));
-        triodeStages[activeFactor].setControlBiasVolts (-grCouplingVoltsPerDb
-                                                        * static_cast<double> (blockGrDb));
-        triodeStages[activeFactor].process (context);
+        // Vari-mu coupling: the compressor's gain reduction drives the tube's
+        // grid colder, so the harmonic character grows with GR instead of
+        // staying fixed. It follows the per-sample GR trace (held across each
+        // oversampling period), not a per-block value, so the result does not
+        // depend on the host's block size. Only the triode path has an
+        // operating point to move; the Fast waveshaper has no bias.
+        auto& triode = triodeStages[activeFactor];
+        triode.setControlBiasSource (compressor.getGainReductionTrace(),
+                                     compressor.getGainReductionTraceLength(),
+                                     static_cast<size_t> (1) << activeFactor,
+                                     grCouplingVoltsPerDb);
+        triode.process (context);
+        triode.clearControlBiasSource();
     }
     else
     {
