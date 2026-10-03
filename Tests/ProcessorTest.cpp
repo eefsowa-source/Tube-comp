@@ -31,11 +31,10 @@ std::unique_ptr<TubeCompAudioProcessor> makeProcessor (float mix, float bypass,
     // Look-ahead only exists in the feed-forward detector; the feedback
     // topology (the default) applies none and reports no look-ahead latency.
     setParam (*processor, ParamIDs::topology, 0.0f);
-    // These checks are about latency, alignment and start-up; keep gain
-    // reduction out of them. (With feed-forward look-ahead the detector sees
-    // the impulse early, and GR-driven tube bias motion is covered by its own
-    // regression test.)
-    setParam (*processor, ParamIDs::threshold, 0.0f);
+    // Default threshold on purpose: with feed-forward look-ahead the detector
+    // sees the impulse ~480 samples early and moves the tube bias while the
+    // tube input is still silent; check 1 then also proves that bias motion
+    // alone produces no output (VariMuThumpTest covers it in depth).
     setParam (*processor, ParamIDs::oversample, oversample);
     processor->prepareToPlay (sampleRate, blockSize);
     return processor;

@@ -292,6 +292,7 @@ void TubeCompAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlo
     {
         auto oversampledSpec = spec;
         oversampledSpec.sampleRate = sampleRate * static_cast<double> (1 << choice);
+        oversampledSpec.maximumBlockSize = safeSamplesPerBlock * (1u << choice);
         saturators[static_cast<size_t> (choice)].prepare (oversampledSpec);
         triodeStages[static_cast<size_t> (choice)].prepare (oversampledSpec);
         transformerStages[static_cast<size_t> (choice)].prepare (oversampledSpec);
