@@ -204,6 +204,7 @@ function(eon_add_processor_test name source)
 endfunction()
 
 eon_add_processor_test(eonchild_TriodePolarityTest Tests/TriodePolarityTest.cpp)
+eon_add_processor_test(eonchild_HostBypassTest Tests/HostBypassTest.cpp)
 
 enable_testing()
 add_test(NAME dsp_sanity COMMAND eonchild_DspTest)
@@ -216,3 +217,4 @@ add_test(NAME saturator_shape COMMAND eonchild_SaturatorTest)
 add_test(NAME processor_latency COMMAND eonchild_ProcessorTest)
 add_test(NAME koren_slope COMMAND eonchild_KorenSlopeTest)
 add_test(NAME triode_polarity COMMAND eonchild_TriodePolarityTest)
+add_test(NAME host_bypass COMMAND eonchild_HostBypassTest)

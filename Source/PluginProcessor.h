@@ -47,6 +47,15 @@ public:
 
     void processBlock (juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
 
+    /** Host bypass for hosts that bypass without going through the parameter
+        returned by getBypassParameter(): the input is delayed by the reported
+        latency so delay compensation stays correct while bypassed. */
+    void processBlockBypassed (juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
+
+    /** Exposes the panel's Bypass to the host, so a host bypass drives the same
+        latency-compensated path instead of JUCE's undelayed pass-through. */
+    juce::AudioProcessorParameter* getBypassParameter() const override;
+
     juce::AudioProcessorEditor* createEditor() override;
     bool hasEditor() const override { return true; }
 
@@ -91,6 +100,11 @@ private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
     void updateOversamplingIfNeeded (int newFactorChoice);
+    /** Applies the latency-defining parameters (quality, look-ahead, detector
+        topology), reports a changed latency to the host and returns it. */
+    int syncLatencyWithParameters();
+    /** Writes the input, delayed by `delaySamples`, to `buffer` (bypass). */
+    void renderDelayedDry (juce::AudioBuffer<float>& buffer, int delaySamples) noexcept;
     void updateMeterTap (const juce::AudioBuffer<float>& buffer,
                           std::array<float, 2>& envelope,
                           std::array<std::atomic<float>, 2>& publishedLevels) noexcept;
