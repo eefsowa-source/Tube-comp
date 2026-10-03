@@ -363,9 +363,11 @@ void TubeCompAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
         apvts.getRawParameterValue (ParamIDs::outputGain)->load()));
     mixSmoothed.setTargetValue (apvts.getRawParameterValue (ParamIDs::mix)->load());
 
+    // Quality, look-ahead and topology define the latency; apply them first so
+    // the reported value and the dry alignment never lag a block behind.
+    const int totalLatency = syncLatencyWithParameters();
+
     const int numQualitySteps = static_cast<int> (oversamplingStages.size());
-    const int requestedQuality = static_cast<int> (apvts.getRawParameterValue (ParamIDs::oversample)->load());
-    updateOversamplingIfNeeded (juce::jlimit (0, numQualitySteps - 1, requestedQuality));
     const int activeQuality = juce::jlimit (0, numQualitySteps - 1, currentOversamplingChoice);
     const auto activeFactor = static_cast<size_t> (activeQuality);
 
@@ -406,21 +408,7 @@ void TubeCompAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
     }
     compressor.setLinkMode (static_cast<int> (apvts.getRawParameterValue (ParamIDs::linkMode)->load()));
     compressor.setKneeDb (apvts.getRawParameterValue (ParamIDs::knee)->load());
-    compressor.setLookAheadMs (apvts.getRawParameterValue (ParamIDs::lookAhead)->load());
     compressor.setSidechainHPFHz (apvts.getRawParameterValue (ParamIDs::sidechainHPF)->load());
-    compressor.setFeedbackMode (apvts.getRawParameterValue (ParamIDs::topology)->load() > 0.5f);
-
-    // Latency = compressor look-ahead + oversampling filter delay, derived from
-    // the parameters just applied so the reported value and the dry alignment
-    // never lag a block behind the control.
-    int totalLatency = static_cast<int> (compressor.getLookAheadSamples());
-    if (oversampling != nullptr)
-        totalLatency += static_cast<int> (oversampling->getLatencyInSamples());
-    if (totalLatency != lastReportedLatency)
-    {
-        lastReportedLatency = totalLatency;
-        setLatencySamples (totalLatency);
-    }
 
     jassert (dryBuffer.getNumChannels() >= numChannels && dryBuffer.getNumSamples() >= numSamples);
 
@@ -431,7 +419,7 @@ void TubeCompAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
 
     if (apvts.getRawParameterValue (ParamIDs::bypass)->load() > 0.5f)
     {
-        for (int ch = 0; ch < numChannels; ++ch)
+        for (int ch = 0; ch < juce::jmin (numChannels, dryBuffer.getNumChannels()); ++ch)
             buffer.copyFrom (ch, 0, dryBuffer, ch, 0, numSamples);
         updateMeterTap (buffer, outputMeterEnvelope, outputMeterLevelDb);
         return;
@@ -495,6 +483,57 @@ void TubeCompAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
     // Out mode represents the actual plug-in result, including output gain,
     // saturation and dry/wet blend, not the compressor's internal buffer.
     updateMeterTap (buffer, outputMeterEnvelope, outputMeterLevelDb);
+}
+
+int TubeCompAudioProcessor::syncLatencyWithParameters()
+{
+    const int numQualitySteps = static_cast<int> (oversamplingStages.size());
+    const int requestedQuality = static_cast<int> (apvts.getRawParameterValue (ParamIDs::oversample)->load());
+    updateOversamplingIfNeeded (juce::jlimit (0, numQualitySteps - 1, requestedQuality));
+
+    compressor.setLookAheadMs (apvts.getRawParameterValue (ParamIDs::lookAhead)->load());
+    compressor.setFeedbackMode (apvts.getRawParameterValue (ParamIDs::topology)->load() > 0.5f);
+
+    // Latency = compressor look-ahead + oversampling filter delay.
+    int totalLatency = static_cast<int> (compressor.getLookAheadSamples());
+    if (oversampling != nullptr)
+        totalLatency += static_cast<int> (oversampling->getLatencyInSamples());
+
+    if (totalLatency != lastReportedLatency)
+    {
+        lastReportedLatency = totalLatency;
+        setLatencySamples (totalLatency);
+    }
+
+    return totalLatency;
+}
+
+void TubeCompAudioProcessor::renderDelayedDry (juce::AudioBuffer<float>& buffer, int delaySamples) noexcept
+{
+    const int numSamples = buffer.getNumSamples();
+    jassert (dryBuffer.getNumSamples() >= numSamples);
+
+    dryDelay.setDelaySamples (delaySamples);
+    dryDelay.process (buffer, dryBuffer, numSamples);
+
+    for (int ch = 0; ch < juce::jmin (buffer.getNumChannels(), dryBuffer.getNumChannels()); ++ch)
+        buffer.copyFrom (ch, 0, dryBuffer, ch, 0, numSamples);
+}
+
+void TubeCompAudioProcessor::processBlockBypassed (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
+{
+    juce::ScopedNoDenormals noDenormals;
+
+    // Same taps and the same dry delay line as processBlock(): alternating
+    // active and host-bypassed blocks stays one continuous, aligned signal.
+    updateMeterTap (buffer, inputMeterEnvelope, inputMeterLevelDb);
+    renderDelayedDry (buffer, syncLatencyWithParameters());
+    updateMeterTap (buffer, outputMeterEnvelope, outputMeterLevelDb);
+}
+
+juce::AudioProcessorParameter* TubeCompAudioProcessor::getBypassParameter() const
+{
+    return apvts.getParameter (ParamIDs::bypass);
 }
 
 juce::AudioProcessorEditor* TubeCompAudioProcessor::createEditor()
