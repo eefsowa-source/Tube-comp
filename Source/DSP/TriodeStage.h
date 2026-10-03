@@ -97,17 +97,32 @@ public:
         auto&& outputBlock = context.getOutputBlock();
         auto&& inputBlock = context.getInputBlock();
 
-        const auto numChannels = outputBlock.getNumChannels();
-        jassert (numChannels <= channels.size());
+        const auto numChannels = juce::jmin (outputBlock.getNumChannels(), channels.size());
+        const auto numSamples = outputBlock.getNumSamples();
+        jassert (outputBlock.getNumChannels() <= channels.size());
 
-        for (size_t ch = 0; ch < numChannels; ++ch)
+        // The control trace (smoothed bias, gain trim, resting plate voltage)
+        // is shared by all channels, so it is rendered once per chunk into a
+        // buffer preallocated in prepare(). Chunking keeps any block length
+        // safe without allocating.
+        const auto chunkCapacity = controlTrace.size();
+        if (chunkCapacity == 0)
+            return;
+
+        for (size_t offset = 0; offset < numSamples; offset += chunkCapacity)
         {
-            auto* in = inputBlock.getChannelPointer (ch);
-            auto* out = outputBlock.getChannelPointer (ch);
-            auto& state = channels[ch];
+            const auto count = juce::jmin (chunkCapacity, numSamples - offset);
+            renderControlTrace (count);
 
-            for (size_t i = 0; i < outputBlock.getNumSamples(); ++i)
-                out[i] = processSample (state, in[i]);
+            for (size_t ch = 0; ch < numChannels; ++ch)
+            {
+                auto* in = inputBlock.getChannelPointer (ch) + offset;
+                auto* out = outputBlock.getChannelPointer (ch) + offset;
+                auto& state = channels[ch];
+
+                for (size_t i = 0; i < count; ++i)
+                    out[i] = processSample (state, in[i], controlTrace[i]);
+            }
         }
 
         tiltFilter.process (context);
@@ -121,11 +136,33 @@ private:
         double cathodeV = 2.0;                        // tracked Vk (slow)
         double plateVpk = 100.0;                       // Newton-Raphson warm start
         double plateVpkPrev = 100.0;                   // previous sample, for the linear predictor
-        double controlBias = 0.0;                      // smoothed vari-mu control voltage
-        double compGain = 1.0;                         // smoothed small-signal gain trim
     };
 
-    float processSample (ChannelState& s, float xIn) noexcept;
+    /** Per-sample control values shared by every channel. */
+    struct ControlFrame
+    {
+        double bias = 0.0;        // smoothed vari-mu control voltage
+        double gainComp = 1.0;    // small-signal gain trim for that bias
+        double restPlateV = 0.0;  // plate-to-ground voltage of the same stage at rest
+    };
+
+    /** Resting ("silent twin") copy of the stage: identical circuit, bias and
+        cathode resistor, zero grid signal. Its plate voltage is the operating
+        point the control bias and Rk move the real stage to; subtracting it
+        before the output coupling network removes that DC motion, which the
+        7 Hz coupling high-pass otherwise turns into a subsonic thump every time
+        the gain reduction changes. The signal path, its harmonics, and its own
+        program-dependent cathode sag are untouched. */
+    struct RestingState
+    {
+        double cathodeV = 2.0;
+        double plateVpk = 100.0;
+        double plateVpkPrev = 100.0;
+    };
+
+    void renderControlTrace (size_t numSamples) noexcept;
+    static double gainCompForBias (double controlBiasVolts) noexcept;
+    float processSample (ChannelState& s, float xIn, const ControlFrame& control) noexcept;
     void updateCathodeResistance() noexcept;
     void updateControlBiasCompensation() noexcept;
 
@@ -163,6 +200,9 @@ private:
     double quiescentVpk = 150.0;
 
     std::vector<ChannelState> channels;
+    RestingState resting;
+    double smoothedControlBias = 0.0;
+    std::vector<ControlFrame> controlTrace; // preallocated in prepare()
 
     juce::dsp::ProcessorDuplicator<juce::dsp::IIR::Filter<float>,
                                    juce::dsp::IIR::Coefficients<float>> tiltFilter;
