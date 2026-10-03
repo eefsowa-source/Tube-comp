@@ -118,6 +118,10 @@ private:
     std::array<TransformerStage, 4> transformerStages;
     std::array<std::unique_ptr<juce::dsp::Oversampling<float>>, 4> oversamplingStages;
     juce::dsp::Oversampling<float>* oversampling = nullptr;
+    // Per quality step: whole-sample wet latency of the FIR chain, and the
+    // OS-rate delay that pads its fractional latency up to that value.
+    std::array<int, 4> oversamplingLatencySamples { 0, 0, 0, 0 };
+    std::array<DryDelayLine, 4> oversamplingPads;
     int currentOversamplingChoice = -1;
     // Index of the stage the tone parameters were last pushed into; a change of
     // quality step forces a full re-apply so the newly active stage is current.
