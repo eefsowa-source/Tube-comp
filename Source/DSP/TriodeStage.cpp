@@ -62,7 +62,8 @@ void TriodeStage::prepare (const juce::dsp::ProcessSpec& spec)
     updateCathodeResistance();
 
     channels.assign (spec.numChannels, ChannelState {});
-    controlTrace.assign (juce::jmax<size_t> (1, spec.maximumBlockSize), ControlFrame {});
+    const auto traceSamples = static_cast<size_t> (spec.maximumBlockSize);
+    controlTrace.assign (traceSamples < 1 ? size_t { 1 } : traceSamples, ControlFrame {});
 
     // Control-bias smoothing runs at the oversampled rate this stage is prepared
     // with, so the vari-mu coupling tracks the GR envelope without block-rate steps.

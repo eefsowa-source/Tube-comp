@@ -84,7 +84,7 @@ public:
     {
         controlSource = gainReductionDb;
         controlSourceLength = numBaseSamples;
-        controlSourceFactor = juce::jmax<size_t> (1, oversamplingFactor);
+        controlSourceFactor = oversamplingFactor < 1 ? size_t { 1 } : oversamplingFactor;
         controlSourceVoltsPerDb = voltsPerDb;
         controlSourcePosition = 0;
     }
