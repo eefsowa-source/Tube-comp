@@ -289,16 +289,48 @@ void TubeCompAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlo
     // to ~70 deg of HF phase error against the dry path) the fractional
     // remainder is padded with a whole number of samples at the oversampled
     // rate. Total wet latency is then an exact integer with linear phase.
+    //
+    // Stages are not JUCE's maximum-quality preset (2x/4x/8x would be 49/60/65
+    // samples: the first half-band is -90 dB with a transition of 0.05). The
+    // pairs below keep that linear phase and cost 20/25/27 samples. 1x adds
+    // no half-band.
+    struct HalfBandSpec
+    {
+        float transitionUp, stopDbUp, transitionDown, stopDbDown;
+    };
+
+    static constexpr HalfBandSpec halfBands[] = {
+        { 0.10f, -70.0f, 0.12f, -65.0f },
+        { 0.16f, -60.0f, 0.18f, -55.0f },
+        { 0.18f, -55.0f, 0.20f, -50.0f },
+    };
+
     int maxOversamplingLatency = 0;
     for (int choice = 0; choice < static_cast<int> (oversamplingStages.size()); ++choice)
     {
         const auto index = static_cast<size_t> (choice);
         const int factor = 1 << choice;
         oversamplingStages[index] = std::make_unique<juce::dsp::Oversampling<float>> (
-            numChannels, static_cast<size_t> (choice),
-            juce::dsp::Oversampling<float>::filterHalfBandFIREquiripple,
-            true,    // maximum quality
-            false);  // fractional remainder handled by the OS-rate pad below
+            static_cast<size_t> (numChannels));
+        oversamplingStages[index]->clearOversamplingStages();
+
+        if (choice == 0)
+        {
+            oversamplingStages[index]->addDummyOversamplingStage();
+        }
+        else
+        {
+            for (int stage = 0; stage < choice; ++stage)
+            {
+                const auto& band = halfBands[static_cast<size_t> (stage)];
+                oversamplingStages[index]->addOversamplingStage (
+                    juce::dsp::Oversampling<float>::filterHalfBandFIREquiripple,
+                    band.transitionUp, band.stopDbUp,
+                    band.transitionDown, band.stopDbDown);
+            }
+        }
+
+        oversamplingStages[index]->setUsingIntegerLatency (false);
         oversamplingStages[index]->initProcessing (safeSamplesPerBlock);
 
         const double filterLatency = static_cast<double> (oversamplingStages[index]->getLatencyInSamples());

@@ -58,13 +58,19 @@ int main()
     juce::ScopedJuceInitialiser_GUI juceInit;
     bool passed = true;
 
-    // 1. The wet path's impulse peak must sit exactly at the reported latency
-    //    (linear-phase filters, integer latency), so the dry delay matches.
+    // 1. Wet impulse peak at the reported latency, and that latency is the
+    //    half-band budget in prepareToPlay (1x/2x/4x/8x = 0/20/25/27). The
+    //    default detector is feedback, so look-ahead adds nothing here.
+    constexpr int expectedLatency[] = { 0, 20, 25, 27 };
+
     for (float quality : { 0.0f, 1.0f, 2.0f, 3.0f })
     {
         int latency = 0;
         const int peak = wetImpulsePeak (quality, latency);
-        std::printf ("%dx: reported latency %d, wet impulse peak %d\n", 1 << static_cast<int> (quality), latency, peak);
+        const int expected = expectedLatency[static_cast<int> (quality)];
+        std::printf ("%dx: reported latency %d (spec %d), wet impulse peak %d\n",
+                     1 << static_cast<int> (quality), latency, expected, peak);
+        passed &= check (latency == expected, "oversampling latency matches the half-band spec");
         passed &= check (peak == latency, "wet impulse peak at the reported latency");
     }
 
