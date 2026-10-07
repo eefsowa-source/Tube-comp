@@ -73,6 +73,24 @@ public:
         compressor rather than double-counting the reduction. */
     void setControlBiasVolts (double volts) noexcept;
 
+    /** Per-sample control source for the next process() call(s): base-rate
+        gain reduction in dB (one value per base-rate sample), each held for
+        `oversamplingFactor` stage samples and mapped to -voltsPerDb * GR
+        (clamped to the control range). Overrides setControlBiasVolts() until
+        clearControlBiasSource(). The pointer must stay valid while processing;
+        nothing is copied or allocated. */
+    void setControlBiasSource (const float* gainReductionDb, size_t numBaseSamples,
+                               size_t oversamplingFactor, double voltsPerDb) noexcept
+    {
+        controlSource = gainReductionDb;
+        controlSourceLength = numBaseSamples;
+        controlSourceFactor = oversamplingFactor < 1 ? size_t { 1 } : oversamplingFactor;
+        controlSourceVoltsPerDb = voltsPerDb;
+        controlSourcePosition = 0;
+    }
+
+    void clearControlBiasSource() noexcept { controlSource = nullptr; controlSourceLength = 0; }
+
     /** Current requested control bias, in volts. */
     double getControlBiasVolts() const noexcept { return controlBiasTargetVolts; }
 
@@ -97,23 +115,47 @@ public:
         auto&& outputBlock = context.getOutputBlock();
         auto&& inputBlock = context.getInputBlock();
 
-        const auto numChannels = outputBlock.getNumChannels();
-        jassert (numChannels <= channels.size());
+        const auto numChannels = juce::jmin (outputBlock.getNumChannels(), channels.size());
+        const auto numSamples = outputBlock.getNumSamples();
+        jassert (outputBlock.getNumChannels() <= channels.size());
 
-        for (size_t ch = 0; ch < numChannels; ++ch)
+        // The control trace (smoothed bias, gain trim, resting plate voltage)
+        // is shared by all channels, so it is rendered once per chunk into a
+        // buffer preallocated in prepare(). Chunking keeps any block length
+        // safe without allocating.
+        const auto chunkCapacity = controlTrace.size();
+        if (chunkCapacity == 0)
+            return;
+
+        for (size_t offset = 0; offset < numSamples; offset += chunkCapacity)
         {
-            auto* in = inputBlock.getChannelPointer (ch);
-            auto* out = outputBlock.getChannelPointer (ch);
-            auto& state = channels[ch];
+            const auto count = juce::jmin (chunkCapacity, numSamples - offset);
+            renderControlTrace (count);
 
-            for (size_t i = 0; i < outputBlock.getNumSamples(); ++i)
-                out[i] = processSample (state, in[i]);
+            for (size_t ch = 0; ch < numChannels; ++ch)
+            {
+                auto* in = inputBlock.getChannelPointer (ch) + offset;
+                auto* out = outputBlock.getChannelPointer (ch) + offset;
+                auto& state = channels[ch];
+
+                for (size_t i = 0; i < count; ++i)
+                {
+                    // Drive hits the first grid only. The second triode sees the
+                    // trimmed first-stage audio at the 0 dB grid scale (1.5 V),
+                    // which is the interstage pad a volume control would be.
+                    const float first = processSample (state, in[i], controlTrace[i], driveVolts);
+                    out[i] = processSample (second[ch], first, controlTrace[i], nominalGridVolts);
+                }
+            }
         }
 
-        tiltFilter.process (context);
+        processTilt (outputBlock);
     }
 
 private:
+    void applyTiltGain (float gainDb) noexcept;
+    void processTilt (juce::dsp::AudioBlock<float> block) noexcept;
+
     struct ChannelState
     {
         double gridPrevIn = 0.0, gridPrevOut = 0.0;   // Cin/Rg highpass state
@@ -121,11 +163,33 @@ private:
         double cathodeV = 2.0;                        // tracked Vk (slow)
         double plateVpk = 100.0;                       // Newton-Raphson warm start
         double plateVpkPrev = 100.0;                   // previous sample, for the linear predictor
-        double controlBias = 0.0;                      // smoothed vari-mu control voltage
-        double compGain = 1.0;                         // smoothed small-signal gain trim
     };
 
-    float processSample (ChannelState& s, float xIn) noexcept;
+    /** Per-sample control values shared by every channel. */
+    struct ControlFrame
+    {
+        double bias = 0.0;        // smoothed vari-mu control voltage
+        double gainComp = 1.0;    // small-signal gain trim for that bias
+        double restPlateV = 0.0;  // plate-to-ground voltage of the same stage at rest
+    };
+
+    /** Resting ("silent twin") copy of the stage: identical circuit, bias and
+        cathode resistor, zero grid signal. Its plate voltage is the operating
+        point the control bias and Rk move the real stage to; subtracting it
+        before the output coupling network removes that DC motion, which the
+        7 Hz coupling high-pass otherwise turns into a subsonic thump every time
+        the gain reduction changes. The signal path, its harmonics, and its own
+        program-dependent cathode sag are untouched. */
+    struct RestingState
+    {
+        double cathodeV = 2.0;
+        double plateVpk = 100.0;
+        double plateVpkPrev = 100.0;
+    };
+
+    void renderControlTrace (size_t numSamples) noexcept;
+    static double gainCompForBias (double controlBiasVolts) noexcept;
+    float processSample (ChannelState& s, float xIn, const ControlFrame& control, double voltsPerUnit) noexcept;
     void updateCathodeResistance() noexcept;
     void updateControlBiasCompensation() noexcept;
 
@@ -155,6 +219,9 @@ private:
     double controlBiasGainComp = 1.0;
 
     double driveVolts = 3.0;
+    // 0 dB of drive. The second stage is fed at this scale, not at driveVolts,
+    // so raising Drive does not slam the second grid.
+    static constexpr double nominalGridVolts = 1.5;
     double outputTrim = 1.0 / 40.0; // brings plate-swing volts back near unity audio range
 
     // DC operating point solved in prepare(). reset() restores it so a reset
@@ -163,8 +230,19 @@ private:
     double quiescentVpk = 150.0;
 
     std::vector<ChannelState> channels;
+    std::vector<ChannelState> second; // the other half of the 12AX7, same circuit
+    RestingState resting;
+    double smoothedControlBias = 0.0;
+    std::vector<ControlFrame> controlTrace; // preallocated in prepare()
+
+    const float* controlSource = nullptr;
+    size_t controlSourceLength = 0, controlSourceFactor = 1, controlSourcePosition = 0;
+    double controlSourceVoltsPerDb = 0.0;
 
     juce::dsp::ProcessorDuplicator<juce::dsp::IIR::Filter<float>,
                                    juce::dsp::IIR::Coefficients<float>> tiltFilter;
+    // Same 20 ms shelf ramp as TubeSaturator. Coefficients stay in the object
+    // allocated by prepare(); only the gain moves.
+    juce::LinearSmoothedValue<float> brightnessDb { 0.0f };
     double sampleRate = 44100.0;
 };

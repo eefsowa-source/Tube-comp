@@ -120,6 +120,46 @@ int main()
         }
     }
 
+    // 5. Brightness ramps. A jump to the +3 dB shelf must not arrive on the
+    //    first samples; after the 20 ms ramp the high band is louder.
+    {
+        constexpr double rate = 48000.0;
+        constexpr float frequency = 8000.0f;
+        constexpr int numSamples = static_cast<int> (rate * 0.12);
+        TubeSaturator saturator;
+        saturator.prepare ({ rate, 512, 1 });
+        saturator.setDrive (0.0f);
+        saturator.setHarmonicRatio (0.5f);
+        saturator.setBrightness (1.0f);
+
+        juce::AudioBuffer<float> buffer (1, numSamples);
+        auto* data = buffer.getWritePointer (0);
+        for (int i = 0; i < numSamples; ++i)
+            data[i] = 0.05f * std::sin (2.0 * juce::MathConstants<double>::pi * frequency * i / rate);
+
+        juce::dsp::AudioBlock<float> block (buffer);
+        juce::dsp::ProcessContextReplacing<float> context (block);
+        saturator.process (context);
+
+        auto rms = [data] (int start, int length)
+        {
+            double sum = 0.0;
+            for (int i = 0; i < length; ++i)
+                sum += static_cast<double> (data[start + i]) * data[start + i];
+            return std::sqrt (sum / length);
+        };
+
+        const int earlyN = static_cast<int> (rate * 0.002);
+        const int lateStart = static_cast<int> (rate * 0.08);
+        const double early = rms (0, earlyN);
+        const double late = rms (lateStart, earlyN);
+        const double ratio = late / juce::jmax (1.0e-12, early);
+        std::printf ("brightness ramp 8 kHz: early rms %.6f late rms %.6f ratio %.3f\n",
+                     early, late, ratio);
+        passed = passed && std::isfinite (early) && std::isfinite (late)
+               && ratio > 1.2 && ratio < 1.6;
+    }
+
     std::printf (passed ? "PASS\n" : "FAIL\n");
     return passed ? 0 : 1;
 }

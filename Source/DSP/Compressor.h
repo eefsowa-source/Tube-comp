@@ -24,7 +24,10 @@
 class Compressor
 {
 public:
-    void prepare (double newSampleRate, int numChannels);
+    /** `maxBlockSize` sizes the per-sample gain-reduction trace (see
+        getGainReductionTrace()); blocks longer than it are still compressed,
+        only the trace is truncated. */
+    void prepare (double newSampleRate, int numChannels, int maxBlockSize = 4096);
     void reset();
 
     void setThresholdDb (float dB) noexcept { thresholdDb = dB; }
@@ -41,8 +44,10 @@ public:
 
     void process (juce::AudioBuffer<float>& buffer) noexcept;
 
-    /** Configured look-ahead length in samples; contributes to the reported plugin latency. */
-    size_t getLookAheadSamples() const noexcept { return lookAheadSamples; }
+    /** Active look-ahead in samples; contributes to the reported plugin latency.
+        A feedback detector reads the compressed output, so it cannot look
+        ahead: in feedback mode the delay is bypassed and this returns 0. */
+    size_t getLookAheadSamples() const noexcept { return feedbackMode ? 0 : lookAheadSamples; }
 
     /** Upper bound of the look-ahead parameter. Delay buffers are preallocated for this in prepare(). */
     static constexpr float maxLookAheadMs = 20.0f;
@@ -71,6 +76,14 @@ public:
                                               : 0.0f;
     }
 
+    /** Per-sample gain reduction (dB, >= 0, max over both detector paths) of
+        the most recent process() call: entry i is the gain applied to output
+        sample i. Lets the vari-mu coupling follow GR sample by sample, so the
+        result does not depend on how the host splits blocks. Valid until the
+        next process() call. */
+    const float* getGainReductionTrace() const noexcept { return gainReductionTrace.data(); }
+    size_t getGainReductionTraceLength() const noexcept { return gainReductionTraceLength; }
+
     /** Post-gain output level for channel 0 (L) / 1 (R), VU-ballistics smoothed, in dBFS.
         Safe to call from the message/UI thread while the audio thread updates it. */
     float getChannelLevelDb (int channel) const noexcept
@@ -80,7 +93,12 @@ public:
     }
 
 private:
+    /** Feed-forward gain computer: target GR (dB) for an *input* level. */
     float computeTargetGainReductionDb (float levelDb) const noexcept;
+    /** Feedback gain computer: target GR (dB) for an *output* level, chosen so
+        the closed loop lands on exactly the same static curve (threshold,
+        ratio, knee) as the feed-forward computer. */
+    float computeFeedbackTargetGainReductionDb (float outputLevelDb) const noexcept;
 
     double sampleRate = 44100.0;
     int channelCount = 2;
@@ -97,6 +115,8 @@ private:
     std::array<std::atomic<float>, 2> channelGainDbAtomic { { 0.0f, 0.0f } };
     std::array<float, 2> blockGainDb { 0.0f, 0.0f };
     std::array<std::atomic<float>, 2> blockGainDbAtomic { { 0.0f, 0.0f } };
+    std::vector<float> gainReductionTrace; // preallocated in prepare()
+    size_t gainReductionTraceLength = 0;
 
     int timeConstantChoice = 0; // 0 = custom, 1..6 = Fairchild-style
     int linkMode = 1;            // 0 = L/R, 1 = linked, 2 = Lateral/Vertical
