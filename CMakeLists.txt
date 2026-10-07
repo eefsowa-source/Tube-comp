@@ -12,9 +12,9 @@ if(JUCE_DIR)
     add_subdirectory(${JUCE_DIR} JUCE)
 else()
     FetchContent_Declare(JUCE
-        GIT_REPOSITORY https://github.com/juce-framework/JUCE.git
-        GIT_TAG        9.0.2
-        GIT_SHALLOW    TRUE)
+        URL      https://github.com/juce-framework/JUCE/archive/refs/tags/9.0.2.tar.gz
+        URL_HASH SHA256=16d01c27e8327f3644306cc5c223aa6e21af1cc1ec62faa709fc0dced57d208a
+        DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
     FetchContent_MakeAvailable(JUCE)
 endif()
 
@@ -138,6 +138,12 @@ target_link_libraries(eonchild_ProcessorTest PRIVATE
     juce::juce_dsp
     juce::juce_recommended_config_flags)
 
+# Offline tools (baseline printer, null render, editor snapshot) are dev aids —
+# CI does not run them, so skip their per-target JUCE module compiles there.
+option(EON_BUILD_TOOLS "Build offline measurement/render/snapshot tools" ON)
+
+if(EON_BUILD_TOOLS)
+
 # Measurement harness, not a pass/fail test: prints the tone/aliasing/cost baseline
 # for every quality, model and anti-aliasing setting.
 add_executable(eonchild_SoundBaseline
@@ -171,6 +177,8 @@ target_link_libraries(eonchild_EditorSnapshot PRIVATE
     juce::juce_audio_utils
     juce::juce_gui_extra
     juce::juce_recommended_config_flags)
+
+endif()
 
 enable_testing()
 add_test(NAME dsp_sanity COMMAND eonchild_DspTest)
