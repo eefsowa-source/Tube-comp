@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   plugin-ci:
-    uses: eefsowa-source/eon-ci/.github/workflows/reusable-ci.yml@v1.1.2
+    uses: eefsowa-source/eon-ci/.github/workflows/reusable-ci.yml@0e381ce34845c49c59b581e015bfa709ebd5549b
     with:
       product_name: "EON-Vari mu DSP"
       plugin_target: eonchild
