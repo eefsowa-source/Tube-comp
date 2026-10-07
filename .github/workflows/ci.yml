@@ -1,0 +1,23 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  plugin-ci:
+    uses: eefsowa-source/eon-ci/.github/workflows/reusable-ci.yml@v1.0.0
+    with:
+      product_name: "EON-Vari mu DSP"
+      plugin_target: eonchild
+      au_type: aufx
+      au_subtype: Eonc
+      au_manufacturer: Eonn

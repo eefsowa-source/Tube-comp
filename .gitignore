@@ -6,3 +6,4 @@ build/
 JuceLibraryCode/
 *.pid
 Packaging/dist/
+build-*/
