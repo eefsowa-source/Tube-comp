@@ -5,9 +5,20 @@ project(eonchild VERSION 0.1.0)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-add_subdirectory(/Users/sungha/JUCE JUCE)
-
 include(FetchContent)
+
+set(JUCE_DIR "/Users/sungha/JUCE" CACHE PATH "Local JUCE checkout; set empty to fetch JUCE instead")
+if(JUCE_DIR)
+    add_subdirectory(${JUCE_DIR} JUCE)
+else()
+    FetchContent_Declare(JUCE
+        GIT_REPOSITORY https://github.com/juce-framework/JUCE.git
+        GIT_TAG        9.0.2
+        GIT_SHALLOW    TRUE)
+    FetchContent_MakeAvailable(JUCE)
+endif()
+
+include(cmake/Platform.cmake)
 FetchContent_Declare(melatonin_inspector
     GIT_REPOSITORY https://github.com/sudara/melatonin_inspector.git
     GIT_TAG 9c483f865854d83fe9873e1c20e3fd772f695f80
@@ -50,6 +61,7 @@ target_compile_definitions(eonchild
 
 target_link_libraries(eonchild
     PRIVATE
+        eon_dsp
         juce::juce_audio_utils
         juce::juce_dsp
     PUBLIC
