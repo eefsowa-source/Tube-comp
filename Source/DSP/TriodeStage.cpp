@@ -97,7 +97,9 @@ void TriodeStage::prepare (const juce::dsp::ProcessSpec& spec)
     quiescentVpk = Vpk;
 
     tiltFilter.prepare (spec);
-    setBrightness (0.5f);
+    brightnessDb.reset (spec.sampleRate, 0.02);
+    brightnessDb.setCurrentAndTargetValue (0.0f);
+    applyTiltGain (0.0f);
     reset();
 }
 
@@ -137,9 +139,39 @@ void TriodeStage::setHarmonicRatio (float ratio01) noexcept
 
 void TriodeStage::setBrightness (float brightness01) noexcept
 {
-    const float gainDb = juce::jmap (brightness01, 0.0f, 1.0f, -3.0f, 3.0f);
-    *tiltFilter.state = *juce::dsp::IIR::Coefficients<float>::makeHighShelf (
+    const float gainDb = juce::jmap (juce::jlimit (0.0f, 1.0f, brightness01), 0.0f, 1.0f, -3.0f, 3.0f);
+    brightnessDb.setTargetValue (gainDb);
+}
+
+void TriodeStage::applyTiltGain (float gainDb) noexcept
+{
+    if (tiltFilter.state == nullptr || sampleRate <= 0.0)
+        return;
+
+    *tiltFilter.state = juce::dsp::IIR::ArrayCoefficients<float>::makeHighShelf (
         sampleRate, 3000.0f, 0.707f, juce::Decibels::decibelsToGain (gainDb));
+}
+
+void TriodeStage::processTilt (juce::dsp::AudioBlock<float> block) noexcept
+{
+    const auto numSamples = block.getNumSamples();
+
+    if (numSamples == 0)
+        return;
+
+    if (! brightnessDb.isSmoothing())
+    {
+        tiltFilter.process (juce::dsp::ProcessContextReplacing<float> (block));
+        return;
+    }
+
+    for (size_t i = 0; i < numSamples; ++i)
+    {
+        applyTiltGain (brightnessDb.getNextValue());
+        auto sampleBlock = block.getSubBlock (i, 1);
+        juce::dsp::ProcessContextReplacing<float> context (sampleBlock);
+        tiltFilter.process (context);
+    }
 }
 
 void TriodeStage::setBiasDrive (float bias01) noexcept
