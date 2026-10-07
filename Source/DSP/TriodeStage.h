@@ -143,10 +143,13 @@ public:
             }
         }
 
-        tiltFilter.process (context);
+        processTilt (outputBlock);
     }
 
 private:
+    void applyTiltGain (float gainDb) noexcept;
+    void processTilt (juce::dsp::AudioBlock<float> block) noexcept;
+
     struct ChannelState
     {
         double gridPrevIn = 0.0, gridPrevOut = 0.0;   // Cin/Rg highpass state
@@ -228,5 +231,8 @@ private:
 
     juce::dsp::ProcessorDuplicator<juce::dsp::IIR::Filter<float>,
                                    juce::dsp::IIR::Coefficients<float>> tiltFilter;
+    // Same 20 ms shelf ramp as TubeSaturator. Coefficients stay in the object
+    // allocated by prepare(); only the gain moves.
+    juce::LinearSmoothedValue<float> brightnessDb { 0.0f };
     double sampleRate = 44100.0;
 };
