@@ -139,7 +139,13 @@ public:
                 auto& state = channels[ch];
 
                 for (size_t i = 0; i < count; ++i)
-                    out[i] = processSample (state, in[i], controlTrace[i]);
+                {
+                    // Drive hits the first grid only. The second triode sees the
+                    // trimmed first-stage audio at the 0 dB grid scale (1.5 V),
+                    // which is the interstage pad a volume control would be.
+                    const float first = processSample (state, in[i], controlTrace[i], driveVolts);
+                    out[i] = processSample (second[ch], first, controlTrace[i], nominalGridVolts);
+                }
             }
         }
 
@@ -183,7 +189,7 @@ private:
 
     void renderControlTrace (size_t numSamples) noexcept;
     static double gainCompForBias (double controlBiasVolts) noexcept;
-    float processSample (ChannelState& s, float xIn, const ControlFrame& control) noexcept;
+    float processSample (ChannelState& s, float xIn, const ControlFrame& control, double voltsPerUnit) noexcept;
     void updateCathodeResistance() noexcept;
     void updateControlBiasCompensation() noexcept;
 
@@ -213,6 +219,9 @@ private:
     double controlBiasGainComp = 1.0;
 
     double driveVolts = 3.0;
+    // 0 dB of drive. The second stage is fed at this scale, not at driveVolts,
+    // so raising Drive does not slam the second grid.
+    static constexpr double nominalGridVolts = 1.5;
     double outputTrim = 1.0 / 40.0; // brings plate-swing volts back near unity audio range
 
     // DC operating point solved in prepare(). reset() restores it so a reset
@@ -221,6 +230,7 @@ private:
     double quiescentVpk = 150.0;
 
     std::vector<ChannelState> channels;
+    std::vector<ChannelState> second; // the other half of the 12AX7, same circuit
     RestingState resting;
     double smoothedControlBias = 0.0;
     std::vector<ControlFrame> controlTrace; // preallocated in prepare()

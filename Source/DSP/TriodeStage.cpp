@@ -62,6 +62,7 @@ void TriodeStage::prepare (const juce::dsp::ProcessSpec& spec)
     updateCathodeResistance();
 
     channels.assign (spec.numChannels, ChannelState {});
+    second.assign (spec.numChannels, ChannelState {});
     const auto traceSamples = static_cast<size_t> (spec.maximumBlockSize);
     controlTrace.assign (traceSamples < 1 ? size_t { 1 } : traceSamples, ControlFrame {});
 
@@ -105,17 +106,20 @@ void TriodeStage::prepare (const juce::dsp::ProcessSpec& spec)
 
 void TriodeStage::reset()
 {
-    for (auto& ch : channels)
+    for (auto& bank : { &channels, &second })
     {
-        ch.gridPrevIn = ch.gridPrevOut = 0.0;
-        ch.cathodeV = quiescentVk;
-        ch.plateVpk = quiescentVpk;
-        ch.plateVpkPrev = quiescentVpk;
-        // The coupling network sees the plate voltage relative to the resting
-        // stage, which is 0 V at rest, so the output capacitor starts settled
-        // (no DC step on the first samples).
-        ch.outPrevIn = 0.0;
-        ch.outPrevOut = 0.0;
+        for (auto& ch : *bank)
+        {
+            ch.gridPrevIn = ch.gridPrevOut = 0.0;
+            ch.cathodeV = quiescentVk;
+            ch.plateVpk = quiescentVpk;
+            ch.plateVpkPrev = quiescentVpk;
+            // The coupling network sees the plate voltage relative to the resting
+            // stage, which is 0 V at rest, so the output capacitor starts settled
+            // (no DC step on the first samples).
+            ch.outPrevIn = 0.0;
+            ch.outPrevOut = 0.0;
+        }
     }
     resting.cathodeV = quiescentVk;
     resting.plateVpk = quiescentVpk;
@@ -262,9 +266,9 @@ void TriodeStage::renderControlTrace (size_t numSamples) noexcept
         controlBiasGainComp = gainCompForBias (controlBiasTargetVolts); // keep the accessor current
 }
 
-float TriodeStage::processSample (ChannelState& s, float xIn, const ControlFrame& control) noexcept
+float TriodeStage::processSample (ChannelState& s, float xIn, const ControlFrame& control, double voltsPerUnit) noexcept
 {
-    const double vinGrid = static_cast<double> (xIn) * driveVolts;
+    const double vinGrid = static_cast<double> (xIn) * voltsPerUnit;
 
     // Grid coupling network: RC highpass (Cin, Rg), DC-blocker form.
     const double vg = vinGrid - s.gridPrevIn + gridHighpassCoeff * s.gridPrevOut;
@@ -301,10 +305,8 @@ float TriodeStage::processSample (ChannelState& s, float xIn, const ControlFrame
     s.outPrevIn = vp;
     s.outPrevOut = vOut;
 
-    // A common-cathode stage inverts: a positive grid swing pulls the plate
-    // down. Hardware restores absolute polarity with a second stage or the
-    // output transformer; the model does it here, so the wet path stays in
-    // phase with the dry reference (Mix blends instead of cancelling) and
-    // bypass does not flip polarity.
+    // Each common-cathode stage inverts. The second half inverts again, so the
+    // cascade is in phase with the dry path. The minus is this stage's inversion;
+    // it is not an extra polarity fix on top of two stages.
     return static_cast<float> (-vOut * outputTrim * control.gainComp);
 }
