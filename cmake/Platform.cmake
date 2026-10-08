@@ -1,5 +1,5 @@
 # Shared EON platform pin — the single source of truth for local builds and CI.
-set(EON_PLATFORM_REF "v0.1.2")
+set(EON_PLATFORM_REF "v0.1.3")
 
 FetchContent_Declare(eon-platform
     GIT_REPOSITORY https://github.com/eefsowa-source/eon-platform.git
