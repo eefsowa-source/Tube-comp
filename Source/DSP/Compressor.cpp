@@ -17,10 +17,12 @@ std::array<float, 2> toControlDomain (float left, float right, int linkMode) noe
 }
 }
 
-void Compressor::prepare (double newSampleRate, int numChannels)
+void Compressor::prepare (double newSampleRate, int numChannels, int maxBlockSize)
 {
     sampleRate = newSampleRate;
     channelCount = numChannels;
+    gainReductionTrace.assign (static_cast<size_t> (juce::jmax (1, maxBlockSize)), 0.0f);
+    gainReductionTraceLength = 0;
 
     // Preallocate the longest possible look-ahead once, here on an allocation-
     // safe thread. setLookAheadMs() runs from processBlock() and must never
@@ -170,12 +172,59 @@ float Compressor::computeTargetGainReductionDb (float levelDb) const noexcept
     return (1.0f - 1.0f / ratio) * (delta * delta) / (2.0f * kneeDb);
 }
 
+float Compressor::computeFeedbackTargetGainReductionDb (float outputLevelDb) const noexcept
+{
+    // The loop measures the output, out = in - GR. Inverting the feed-forward
+    // curve GR_ff(in) in terms of `out` gives the target that makes the
+    // steady state satisfy GR = GR_ff(in), so Ratio and Knee keep their
+    // feed-forward meaning. (Feeding the output level into the feed-forward
+    // computer instead gives an effective ratio of 2 - 1/R, never above 2:1.)
+    const float slope = 1.0f - 1.0f / ratio;  // a in GR_ff = a * overshoot
+    if (slope <= 0.0f)
+        return 0.0f;
+
+    const float overshoot = outputLevelDb - thresholdDb;
+
+    if (kneeDb <= 1.0e-6f)
+        return overshoot <= 0.0f ? 0.0f : overshoot * (ratio - 1.0f);
+
+    // In the input domain the knee spans [T - W/2, T + W/2]; mapped through
+    // out = in - GR it spans [T - W/2, T + W/(2R)] in the output domain.
+    const float halfKnee = kneeDb * 0.5f;
+    if (overshoot <= -halfKnee)
+        return 0.0f;
+
+    if (overshoot >= halfKnee / ratio)
+        return overshoot * (ratio - 1.0f);
+
+    // Knee region: with d = in - T + W/2 and e = out - T + W/2, the
+    // feed-forward knee GR = a d^2 / (2W) and out = in - GR give
+    // a d^2 / (2W) - d + e = 0. The smaller root is the physical one and
+    // GR = d - e. The discriminant is >= (1 - a)^2 > 0 inside the knee.
+    const float e = overshoot + halfKnee;
+    const float discriminant = juce::jmax (0.0f, 1.0f - 2.0f * slope * e / kneeDb);
+    const float d = (1.0f - std::sqrt (discriminant)) * kneeDb / slope;
+    return juce::jmax (0.0f, d - e);
+}
+
 void Compressor::process (juce::AudioBuffer<float>& buffer) noexcept
 {
     const int numSamples = buffer.getNumSamples();
     const int numChannels = juce::jmin (buffer.getNumChannels(), channelCount);
+    const size_t activeLookAhead = getLookAheadSamples();
+
+    // Stability of the one-sample feedback loop. Linearised in dB, the loop
+    // gain of the ballistics is c - (1 - c) * (R - 1) for smoothing
+    // coefficient c, because the feedback target moves by (R - 1) dB per dB of
+    // output. Keeping c >= (R - 1) / R makes the loop monotone (no sample-rate
+    // limit cycle) at every ratio. Only very fast attacks at high ratios are
+    // affected: at R = 20 the shortest effective time constant is ~20 samples
+    // (0.4 ms at 48 kHz); at R = 4 it is ~3.5 samples.
+    const float feedbackCoeffFloor = feedbackMode ? (ratio - 1.0f) / ratio : 0.0f;
 
     blockGainDb.fill (0.0f);
+    gainReductionTraceLength = juce::jmin (static_cast<size_t> (juce::jmax (0, numSamples)),
+                                           gainReductionTrace.size());
 
     for (int i = 0; i < numSamples; ++i)
     {
@@ -201,9 +250,9 @@ void Compressor::process (juce::AudioBuffer<float>& buffer) noexcept
                 const auto& ring = delayBuffer[channelIndex];
                 const auto capacity = ring.size();
 
-                if (lookAheadSamples > 0)
+                if (activeLookAhead > 0)
                 {
-                    const auto readPos = (delayWritePos[channelIndex] + capacity - lookAheadSamples) % capacity;
+                    const auto readPos = (delayWritePos[channelIndex] + capacity - activeLookAhead) % capacity;
                     delayedSamples[channelIndex] = ring[readPos];
                 }
                 else
@@ -241,15 +290,19 @@ void Compressor::process (juce::AudioBuffer<float>& buffer) noexcept
         if (effectiveLinkMode == 1)
         {
             const float peak = juce::jmax (std::abs (filtered[0]), std::abs (filtered[1]));
-            const float target = computeTargetGainReductionDb (
-                juce::Decibels::gainToDecibels (peak, -100.0f));
+            const float levelDb = juce::Decibels::gainToDecibels (peak, -100.0f);
+            const float target = feedbackMode ? computeFeedbackTargetGainReductionDb (levelDb)
+                                              : computeTargetGainReductionDb (levelDb);
             targetGainDb = { target, target };
         }
         else
         {
             for (size_t path = 0; path < targetGainDb.size(); ++path)
-                targetGainDb[path] = computeTargetGainReductionDb (
-                    juce::Decibels::gainToDecibels (std::abs (filtered[path]), -100.0f));
+            {
+                const float levelDb = juce::Decibels::gainToDecibels (std::abs (filtered[path]), -100.0f);
+                targetGainDb[path] = feedbackMode ? computeFeedbackTargetGainReductionDb (levelDb)
+                                                  : computeTargetGainReductionDb (levelDb);
+            }
         }
 
         const float maxTarget = juce::jmax (targetGainDb[0], targetGainDb[1]);
@@ -275,11 +328,14 @@ void Compressor::process (juce::AudioBuffer<float>& buffer) noexcept
 
         for (size_t path = 0; path < currentGainDb.size(); ++path)
         {
-            const float coeff = (targetGainDb[path] > currentGainDb[path]) ? attackCoeff : releaseCoeffForSample;
+            const float coeff = juce::jmax (feedbackCoeffFloor,
+                                            (targetGainDb[path] > currentGainDb[path]) ? attackCoeff : releaseCoeffForSample);
             currentGainDb[path] = targetGainDb[path] + coeff * (currentGainDb[path] - targetGainDb[path]);
         }
         for (size_t path = 0; path < blockGainDb.size(); ++path)
             blockGainDb[path] = juce::jmax (blockGainDb[path], currentGainDb[path]);
+        if (static_cast<size_t> (i) < gainReductionTraceLength)
+            gainReductionTrace[static_cast<size_t> (i)] = juce::jmax (currentGainDb[0], currentGainDb[1]);
         if (effectiveLinkMode == 2)
         {
             const auto delayedControl = toControlDomain (delayedSamples[0], delayedSamples[1], effectiveLinkMode);

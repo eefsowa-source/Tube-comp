@@ -34,6 +34,7 @@ private:
     void commitGestureTransaction();
     void applyRestoredState (const juce::ValueTree& state);
     void updateTimeConstantDimming();
+    void updateLookAheadDimming();
     void updateMeterMode();
     void updateReadout (juce::Component* source);
     int getDisplayedProgram() const;

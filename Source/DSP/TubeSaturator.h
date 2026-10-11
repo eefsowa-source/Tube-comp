@@ -65,10 +65,12 @@ public:
             }
         }
 
-        tiltFilter.process (context);
+        processTilt (outputBlock);
     }
 
 private:
+    void applyTiltGain (float gainDb) noexcept;
+    void processTilt (juce::dsp::AudioBlock<float> block) noexcept;
     float shape (float x) const noexcept;
 
     float drive = 1.0f;
@@ -86,5 +88,8 @@ private:
 
     juce::dsp::ProcessorDuplicator<juce::dsp::IIR::Filter<float>,
                                    juce::dsp::IIR::Coefficients<float>> tiltFilter;
+    // ±3 dB shelf gain. Ramped over the same 20 ms as the input/output/mix
+    // gains; the coefficient object itself is allocated once in prepare().
+    juce::LinearSmoothedValue<float> brightnessDb { 0.0f };
     double sampleRate = 44100.0;
 };

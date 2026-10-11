@@ -17,7 +17,9 @@ void TubeSaturator::prepare (const juce::dsp::ProcessSpec& spec)
     dcPrevOutput.assign (spec.numChannels, 0.0f);
 
     tiltFilter.prepare (spec);
-    setBrightness (0.5f);
+    brightnessDb.reset (spec.sampleRate, 0.02);
+    brightnessDb.setCurrentAndTargetValue (0.0f);
+    applyTiltGain (0.0f);
 }
 
 void TubeSaturator::reset()
@@ -33,10 +35,43 @@ void TubeSaturator::reset()
 
 void TubeSaturator::setBrightness (float brightness01) noexcept
 {
-    // High-shelf tilt: brightness01 in [0, 1], 0.5 = flat.
-    const float gainDb = juce::jmap (brightness01, 0.0f, 1.0f, -3.0f, 3.0f);
-    *tiltFilter.state = *juce::dsp::IIR::Coefficients<float>::makeHighShelf (
+    // 0.5 is a flat shelf. The gain ramps; coefficients are rewritten in place.
+    const float gainDb = juce::jmap (juce::jlimit (0.0f, 1.0f, brightness01), 0.0f, 1.0f, -3.0f, 3.0f);
+    brightnessDb.setTargetValue (gainDb);
+}
+
+void TubeSaturator::applyTiltGain (float gainDb) noexcept
+{
+    if (tiltFilter.state == nullptr || sampleRate <= 0.0)
+        return;
+
+    *tiltFilter.state = juce::dsp::IIR::ArrayCoefficients<float>::makeHighShelf (
         sampleRate, 3000.0f, 0.707f, juce::Decibels::decibelsToGain (gainDb));
+}
+
+void TubeSaturator::processTilt (juce::dsp::AudioBlock<float> block) noexcept
+{
+    const auto numSamples = block.getNumSamples();
+
+    if (numSamples == 0)
+        return;
+
+    // While the shelf is moving, update the shared coefficients once per sample
+    // and filter that sample. A whole-block process() snapshots the biquad
+    // coefficients up front, which would turn the ramp back into a step.
+    if (! brightnessDb.isSmoothing())
+    {
+        tiltFilter.process (juce::dsp::ProcessContextReplacing<float> (block));
+        return;
+    }
+
+    for (size_t i = 0; i < numSamples; ++i)
+    {
+        applyTiltGain (brightnessDb.getNextValue());
+        auto sampleBlock = block.getSubBlock (i, 1);
+        juce::dsp::ProcessContextReplacing<float> context (sampleBlock);
+        tiltFilter.process (context);
+    }
 }
 
 float TubeSaturator::shape (float x) const noexcept
