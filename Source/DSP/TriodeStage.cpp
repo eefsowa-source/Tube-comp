@@ -207,8 +207,8 @@ void TriodeStage::setControlBiasVolts (double volts) noexcept
 void TriodeStage::updateControlBiasCompensation() noexcept
 {
     // Small-signal gain loss (dB) vs control-bias depth, measured through the
-    // stage (drive 6 dB, bias ratio 0.5, -6 dBFS 1 kHz):
-    //   0.45 V -> 0.74 dB, 0.90 V -> 1.70 dB, 1.35 V -> 2.93 dB, 1.80 V -> 4.49 dB
+    // two-stage chain (drive 6 dB, bias ratio 0.5, -6 dBFS 1 kHz):
+    //   0.45 V -> 1.3 dB, 0.90 V -> 2.8 dB, 1.35 V -> 4.6 dB, 1.80 V -> 7.1 dB
     // It lands close to the Koren DC transconductance ratio at the hot/cold
     // extremes, but the direct measurement is what the tone actually shows, and
     // it is nearly independent of the cathode resistor. Compensating it keeps the
@@ -220,7 +220,9 @@ void TriodeStage::updateControlBiasCompensation() noexcept
 double TriodeStage::gainCompForBias (double controlBiasVolts) noexcept
 {
     const double depth = juce::jlimit (0.0, maxControlBiasVolts, -controlBiasVolts);
-    return juce::Decibels::decibelsToGain (1.36 * depth + 0.63 * depth * depth);
+    // The trim is applied inside processSample by both stages, so each stage
+    // takes half the chain loss: fit of {0.63, 1.38, 2.32, 3.53} per stage.
+    return juce::Decibels::decibelsToGain (1.20 * depth + 0.41 * depth * depth);
 }
 
 void TriodeStage::renderControlTrace (size_t numSamples) noexcept

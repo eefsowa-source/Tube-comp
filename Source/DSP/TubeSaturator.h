@@ -22,7 +22,7 @@ public:
         value keeps the normal working region (drive plus input at or below 0 dB)
         inside 0.5 dB, and the residual under combined heavy drive is reported by
         the baseline tool. */
-    static constexpr float modelMatchGainDb = 8.0f;
+    static constexpr float modelMatchGainDb = 12.9f;
 
     void prepare (const juce::dsp::ProcessSpec& spec);
     void reset();
