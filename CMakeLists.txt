@@ -30,6 +30,7 @@ FetchContent_MakeAvailable(melatonin_inspector)
 
 juce_add_plugin(eonchild
     COMPANY_NAME "EON"
+    COMPANY_COPYRIGHT "Copyright (c) 2026 EON"
     PLUGIN_MANUFACTURER_CODE Eonn
     PLUGIN_CODE Eonc
     FORMATS AU VST3 Standalone
